@@ -1,3 +1,4 @@
+import cv2
 import imageio
 import os
 import numpy as np
@@ -20,10 +21,11 @@ class VideoRecorder(object):
         if self.enabled:
             frame = env.render(
                 mode='rgb_array',
-                height=self.height,
-                width=self.width,
-                camera_id=self.camera_id
+                # height=self.height,
+                # width=self.width,
+                # camera_id=self.camera_id
             )
+            frame = cv2.resize(frame, (320, 240), interpolation=cv2.INTER_AREA)
             self.frames.append(frame)
 
     def save(self, file_name):

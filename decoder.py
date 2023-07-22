@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from encoder import OUT_DIM
+from encoder import OUT_DIM, OUT_DIM_100x100
 
 
 class PixelDecoder(nn.Module):
@@ -10,7 +10,7 @@ class PixelDecoder(nn.Module):
 
         self.num_layers = num_layers
         self.num_filters = num_filters
-        self.out_dim = OUT_DIM[num_layers]
+        self.out_dim = OUT_DIM_100x100[num_layers]
 
         self.fc = nn.Linear(
             feature_dim, num_filters * self.out_dim * self.out_dim

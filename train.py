@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 import torch
 import argparse
@@ -8,8 +9,16 @@ import sys
 import random
 import time
 import json
-import dmc2gym
+import warnings
+try:
+    import dmc2gym
+except ImportError:
+    warnings.warn('dmc2gym is not installed.')
+
 import copy
+
+import wandb
+from gym.spaces import Box
 
 import utils
 from logger import Logger
@@ -72,6 +81,8 @@ def parse_args():
     parser.add_argument('--save_model', default=False, action='store_true')
     parser.add_argument('--save_buffer', default=False, action='store_true')
     parser.add_argument('--save_video', default=False, action='store_true')
+    parser.add_argument('--project', type=str, required=True)
+    parser.add_argument('--run_name', type=str, required=True)
 
     args = parser.parse_args()
     return args
@@ -131,21 +142,54 @@ def make_agent(obs_shape, action_shape, args, device):
         assert 'agent is not supported: %s' % args.agent
 
 
+class LunarLanderImgWrapper(gym.Wrapper):
+    def __init__(self, env, shape=(100, 100)):
+        super().__init__(env)
+        self.shape = shape
+        self.observation_space = Box(low=0, high=255, shape=(3, *self.shape), dtype=np.uint8)
+        self._max_episode_steps = env._max_episode_steps
+
+    def step(self, action):
+        _, reward, done, info = self.env.step(action)
+        return self._get_obs(), reward, done, info
+
+    def reset(self, **kwargs):
+        _ = self.env.reset(**kwargs)
+        return self._get_obs()
+
+    def _get_obs(self):
+        image = self.env.render(mode='rgb_array')
+        observation = cv2.resize(image, self.shape, interpolation=cv2.INTER_AREA)
+        return np.moveaxis(observation, 2, 0)
+
+
 def main():
     args = parse_args()
     utils.set_seed_everywhere(args.seed)
 
-    env = dmc2gym.make(
-        domain_name=args.domain_name,
-        task_name=args.task_name,
-        seed=args.seed,
-        visualize_reward=False,
-        from_pixels=(args.encoder_type == 'pixel'),
-        height=args.image_size,
-        width=args.image_size,
-        frame_skip=args.action_repeat
+    run = wandb.init(
+        project=args.project,
+        sync_tensorboard=True,  # auto-upload sb3's tensorboard metrics
+        monitor_gym=True,  # auto-upload the videos of agents playing the game
+        save_code=True,  # optional
+        name=args.run_name
     )
+
+    env = gym.make('LunarLanderContinuous-v2')
+    env = LunarLanderImgWrapper(env)
     env.seed(args.seed)
+
+    # env = dmc2gym.make(
+    #     domain_name=args.domain_name,
+    #     task_name=args.task_name,
+    #     seed=args.seed,
+    #     visualize_reward=False,
+    #     from_pixels=(args.encoder_type == 'pixel'),
+    #     height=args.image_size,
+    #     width=args.image_size,
+    #     frame_skip=args.action_repeat
+    # )
+    # env.seed(args.seed)
 
     # stack several consecutive frames together
     if args.encoder_type == 'pixel':
@@ -237,6 +281,8 @@ def main():
 
         obs = next_obs
         episode_step += 1
+
+    wandb.finish()
 
 
 if __name__ == '__main__':
