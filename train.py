@@ -10,6 +10,12 @@ import random
 import time
 import json
 import warnings
+
+from gym.wrappers import TimeLimit
+from omegaconf import OmegaConf
+
+from env.cw_envs import CwTargetEnv
+
 try:
     import dmc2gym
 except ImportError:
@@ -31,6 +37,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     # environment
     parser.add_argument('--domain_name', default='cheetah')
+    parser.add_argument('--domain_type', choices=['gym', 'dmc', 'cw'], default='dmc')
     parser.add_argument('--task_name', default='run')
     parser.add_argument('--image_size', default=84, type=int)
     parser.add_argument('--action_repeat', default=1, type=int)
@@ -175,25 +182,34 @@ def main():
         name=args.run_name
     )
 
-    env = gym.make('LunarLanderContinuous-v2')
-    env = LunarLanderImgWrapper(env)
-    env.seed(args.seed)
-
-    # env = dmc2gym.make(
-    #     domain_name=args.domain_name,
-    #     task_name=args.task_name,
-    #     seed=args.seed,
-    #     visualize_reward=False,
-    #     from_pixels=(args.encoder_type == 'pixel'),
-    #     height=args.image_size,
-    #     width=args.image_size,
-    #     frame_skip=args.action_repeat
-    # )
-    # env.seed(args.seed)
+    channels_first = True
+    if args.domain_name == 'lunarlander':
+        env = gym.make('LunarLanderContinuous-v2')
+        env = LunarLanderImgWrapper(env)
+        env.seed(args.seed)
+    elif args.domain_type == 'dmc':
+        env = dmc2gym.make(
+            domain_name=args.domain_name,
+            task_name=args.task_name,
+            seed=args.seed,
+            visualize_reward=False,
+            from_pixels=(args.encoder_type == 'pixel'),
+            height=args.image_size,
+            width=args.image_size,
+            frame_skip=args.action_repeat
+        )
+        env.seed(args.seed)
+    elif args.domain_type == 'cw':
+        config = OmegaConf.load(f'env/config/{args.domain_name}.yaml')
+        env = CwTargetEnv(config, args.seed)
+        env = TimeLimit(env, env.unwrapped._max_episode_length)
+        channels_first = False
+    else:
+        raise ValueError(f'Unknown domain: type={args.domain_type} name={args.domain_name}')
 
     # stack several consecutive frames together
     if args.encoder_type == 'pixel':
-        env = utils.FrameStack(env, k=args.frame_stack)
+        env = utils.FrameStack(env, k=args.frame_stack, channels_first=channels_first)
 
     utils.make_dir(args.work_dir)
     video_dir = utils.make_dir(os.path.join(args.work_dir, 'video'))
@@ -230,6 +246,7 @@ def main():
 
     episode, episode_reward, done = 0, 0, True
     start_time = time.time()
+    eval_step = 0
     for step in range(args.num_train_steps):
         if done:
             if step > 0:
@@ -238,7 +255,8 @@ def main():
                 L.dump(step)
 
             # evaluate agent periodically
-            if step % args.eval_freq == 0:
+            if step >= eval_step:
+                eval_step += args.eval_freq
                 L.log('eval/episode', episode, step)
                 evaluate(env, agent, video, args.num_eval_episodes, L, step)
                 if args.save_model:

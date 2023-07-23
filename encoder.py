@@ -9,7 +9,6 @@ def tie_weights(src, trg):
 
 
 OUT_DIM = {2: 39, 4: 35, 6: 31}
-OUT_DIM_100x100 = {4: 43}
 
 
 class PixelEncoder(nn.Module):
@@ -28,11 +27,14 @@ class PixelEncoder(nn.Module):
         for i in range(num_layers - 1):
             self.convs.append(nn.Conv2d(num_filters, num_filters, 3, stride=1))
 
-        out_dim = OUT_DIM_100x100[num_layers]
+        self.outputs = dict()
+
+        dummy = self.forward_conv(torch.ones(1, *obs_shape, dtype=torch.float32))
+        out_dim = dummy.size(-1)
+        global OUT_DIM
+        OUT_DIM[num_layers] = out_dim
         self.fc = nn.Linear(num_filters * out_dim * out_dim, self.feature_dim)
         self.ln = nn.LayerNorm(self.feature_dim)
-
-        self.outputs = dict()
 
     def reparameterize(self, mu, logstd):
         std = torch.exp(logstd)
@@ -50,11 +52,10 @@ class PixelEncoder(nn.Module):
             conv = torch.relu(self.convs[i](conv))
             self.outputs['conv%s' % (i + 1)] = conv
 
-        h = conv.view(conv.size(0), -1)
-        return h
+        return conv
 
     def forward(self, obs, detach=False):
-        h = self.forward_conv(obs)
+        h = self.forward_conv(obs).view(obs.size(0), -1)
 
         if detach:
             h = h.detach()

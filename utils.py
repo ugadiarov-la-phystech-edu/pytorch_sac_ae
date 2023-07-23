@@ -141,11 +141,16 @@ class ReplayBuffer(object):
 
 
 class FrameStack(gym.Wrapper):
-    def __init__(self, env, k):
+    def __init__(self, env, k, channels_first=True):
         gym.Wrapper.__init__(self, env)
         self._k = k
         self._frames = deque([], maxlen=k)
+        self.axis = 0
         shp = env.observation_space.shape
+        if not channels_first:
+            shp = (shp[-1], *shp[:-1])
+            self.axis = -1
+
         self.observation_space = gym.spaces.Box(
             low=0,
             high=1,
@@ -167,4 +172,8 @@ class FrameStack(gym.Wrapper):
 
     def _get_obs(self):
         assert len(self._frames) == self._k
-        return np.concatenate(list(self._frames), axis=0)
+        obs = np.concatenate(list(self._frames), axis=self.axis)
+        if self.axis == -1:
+            obs = np.moveaxis(obs, -1, 0)
+
+        return obs
