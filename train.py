@@ -101,15 +101,19 @@ def evaluate(env, agent, video, num_episodes, L, step):
         video.init(enabled=(i == 0))
         done = False
         episode_reward = 0
+        is_success = False
         while not done:
             with utils.eval_mode(agent):
                 action = agent.select_action(obs)
-            obs, reward, done, _ = env.step(action)
+            obs, reward, done, info = env.step(action)
             video.record(env)
             episode_reward += reward
+            if not is_success:
+                is_success = info['is_success']
 
         video.save('%d.mp4' % step)
         L.log('eval/episode_reward', episode_reward, step)
+        L.log('eval/success_rate', int(is_success), step)
     L.dump(step)
 
 
@@ -247,6 +251,7 @@ def main():
     episode, episode_reward, done = 0, 0, True
     start_time = time.time()
     eval_step = 0
+    is_success = False
     for step in range(args.num_train_steps):
         if done:
             if step > 0:
@@ -265,12 +270,14 @@ def main():
                     replay_buffer.save(buffer_dir)
 
             L.log('train/episode_reward', episode_reward, step)
+            L.log('train/success_rate', is_success, step)
 
             obs = env.reset()
             done = False
             episode_reward = 0
             episode_step = 0
             episode += 1
+            is_success = False
 
             L.log('train/episode', episode, step)
 
@@ -287,7 +294,9 @@ def main():
             for _ in range(num_updates):
                 agent.update(replay_buffer, L, step)
 
-        next_obs, reward, done, _ = env.step(action)
+        next_obs, reward, done, info = env.step(action)
+        if not is_success:
+            is_success = info['is_success']
 
         # allow infinit bootstrap
         done_bool = 0 if episode_step + 1 == env._max_episode_steps else float(
