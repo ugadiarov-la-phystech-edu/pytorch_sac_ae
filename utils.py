@@ -157,7 +157,16 @@ class FrameStack(gym.Wrapper):
             shape=((shp[0] * k,) + shp[1:]),
             dtype=env.observation_space.dtype
         )
-        self._max_episode_steps = env._max_episode_steps
+        self._max_episode_steps = None
+        env = self
+        while hasattr(env, 'env'):
+            env = getattr(env, 'env')
+            if hasattr(env, '_max_episode_steps'):
+                self._max_episode_steps = getattr(env, '_max_episode_steps')
+                break
+
+        if self._max_episode_steps is None:
+            raise ValueError('The env is expected to be wrapped into gym.Timelimit wrapper')
 
     def reset(self):
         obs = self.env.reset()

@@ -25,7 +25,7 @@ class VideoRecorder(object):
                 # width=self.width,
                 # camera_id=self.camera_id
             )
-            frame = cv2.resize(frame, (320, 240), interpolation=cv2.INTER_AREA)
+            frame = cv2.resize(frame, (self.height, self.width), interpolation=cv2.INTER_AREA)
             self.frames.append(frame)
 
     def save(self, file_name):

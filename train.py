@@ -30,7 +30,20 @@ import utils
 from logger import Logger
 from video import VideoRecorder
 
-from sac_ae import SacAeAgent
+from sac_ae import SacAeAgent, SacAeAgentDiscrete
+import env.shapes2d
+
+
+class FailOnTimelimit(gym.Wrapper):
+    def __init__(self, env):
+        super(FailOnTimelimit, self).__init__(env)
+
+    def step(self, action):
+        observation, reward, done, info = self.env.step(action)
+        if done:
+            info['is_success'] = not info.get("TimeLimit.truncated", False)
+
+        return observation, reward, done, info
 
 
 def parse_args():
@@ -101,54 +114,85 @@ def evaluate(env, agent, video, num_episodes, L, step):
         video.init(enabled=(i == 0))
         done = False
         episode_reward = 0
-        is_success = False
+        info = None
+        video.record(env)
         while not done:
             with utils.eval_mode(agent):
                 action = agent.select_action(obs)
             obs, reward, done, info = env.step(action)
             video.record(env)
             episode_reward += reward
-            if not is_success:
-                is_success = info['is_success']
 
         video.save('%d.mp4' % step)
         L.log('eval/episode_reward', episode_reward, step)
-        L.log('eval/success_rate', int(is_success), step)
+        L.log('eval/success_rate', int(info['is_success']), step)
     L.dump(step)
 
 
-def make_agent(obs_shape, action_shape, args, device):
+def make_agent(obs_shape, action_space, args, device):
     if args.agent == 'sac_ae':
-        return SacAeAgent(
-            obs_shape=obs_shape,
-            action_shape=action_shape,
-            device=device,
-            hidden_dim=args.hidden_dim,
-            discount=args.discount,
-            init_temperature=args.init_temperature,
-            alpha_lr=args.alpha_lr,
-            alpha_beta=args.alpha_beta,
-            actor_lr=args.actor_lr,
-            actor_beta=args.actor_beta,
-            actor_log_std_min=args.actor_log_std_min,
-            actor_log_std_max=args.actor_log_std_max,
-            actor_update_freq=args.actor_update_freq,
-            critic_lr=args.critic_lr,
-            critic_beta=args.critic_beta,
-            critic_tau=args.critic_tau,
-            critic_target_update_freq=args.critic_target_update_freq,
-            encoder_type=args.encoder_type,
-            encoder_feature_dim=args.encoder_feature_dim,
-            encoder_lr=args.encoder_lr,
-            encoder_tau=args.encoder_tau,
-            decoder_type=args.decoder_type,
-            decoder_lr=args.decoder_lr,
-            decoder_update_freq=args.decoder_update_freq,
-            decoder_latent_lambda=args.decoder_latent_lambda,
-            decoder_weight_lambda=args.decoder_weight_lambda,
-            num_layers=args.num_layers,
-            num_filters=args.num_filters
-        )
+        if isinstance(action_space, gym.spaces.Box):
+            return SacAeAgent(
+                obs_shape=obs_shape,
+                action_shape=action_space.shape,
+                device=device,
+                hidden_dim=args.hidden_dim,
+                discount=args.discount,
+                init_temperature=args.init_temperature,
+                alpha_lr=args.alpha_lr,
+                alpha_beta=args.alpha_beta,
+                actor_lr=args.actor_lr,
+                actor_beta=args.actor_beta,
+                actor_log_std_min=args.actor_log_std_min,
+                actor_log_std_max=args.actor_log_std_max,
+                actor_update_freq=args.actor_update_freq,
+                critic_lr=args.critic_lr,
+                critic_beta=args.critic_beta,
+                critic_tau=args.critic_tau,
+                critic_target_update_freq=args.critic_target_update_freq,
+                encoder_type=args.encoder_type,
+                encoder_feature_dim=args.encoder_feature_dim,
+                encoder_lr=args.encoder_lr,
+                encoder_tau=args.encoder_tau,
+                decoder_type=args.decoder_type,
+                decoder_lr=args.decoder_lr,
+                decoder_update_freq=args.decoder_update_freq,
+                decoder_latent_lambda=args.decoder_latent_lambda,
+                decoder_weight_lambda=args.decoder_weight_lambda,
+                num_layers=args.num_layers,
+                num_filters=args.num_filters
+            )
+        elif isinstance(action_space, gym.spaces.Discrete):
+            return SacAeAgentDiscrete(
+                obs_shape=obs_shape,
+                action_dim=action_space.n,
+                device=device,
+                hidden_dim=args.hidden_dim,
+                discount=args.discount,
+                init_temperature=args.init_temperature,
+                alpha_lr=args.alpha_lr,
+                alpha_beta=args.alpha_beta,
+                actor_lr=args.actor_lr,
+                actor_beta=args.actor_beta,
+                actor_update_freq=args.actor_update_freq,
+                critic_lr=args.critic_lr,
+                critic_beta=args.critic_beta,
+                critic_tau=args.critic_tau,
+                critic_target_update_freq=args.critic_target_update_freq,
+                encoder_type=args.encoder_type,
+                encoder_feature_dim=args.encoder_feature_dim,
+                encoder_lr=args.encoder_lr,
+                encoder_tau=args.encoder_tau,
+                decoder_type=args.decoder_type,
+                decoder_lr=args.decoder_lr,
+                decoder_update_freq=args.decoder_update_freq,
+                decoder_latent_lambda=args.decoder_latent_lambda,
+                decoder_weight_lambda=args.decoder_weight_lambda,
+                num_layers=args.num_layers,
+                num_filters=args.num_filters
+            )
+        else:
+            raise ValueError('Unexpected action space type:', type(action_space))
     else:
         assert 'agent is not supported: %s' % args.agent
 
@@ -174,6 +218,47 @@ class LunarLanderImgWrapper(gym.Wrapper):
         return np.moveaxis(observation, 2, 0)
 
 
+def make_env(args, is_eval=False):
+    seed = args.seed
+    if is_eval:
+        seed += 1
+
+    channels_first = True
+    if args.domain_name == 'lunarlander':
+        env = gym.make('LunarLanderContinuous-v2')
+        env = LunarLanderImgWrapper(env)
+        env.seed(seed)
+    elif args.domain_type == 'dmc':
+        env = dmc2gym.make(
+            domain_name=args.domain_name,
+            task_name=args.task_name,
+            seed=seed,
+            visualize_reward=False,
+            from_pixels=(args.encoder_type == 'pixel'),
+            height=args.image_size,
+            width=args.image_size,
+            frame_skip=args.action_repeat
+        )
+        env.seed(seed)
+    elif args.domain_type == 'cw':
+        config = OmegaConf.load(f'env/config/{args.domain_name}.yaml')
+        env = CwTargetEnv(config, seed)
+        env = TimeLimit(env, env.unwrapped._max_episode_length)
+        channels_first = False
+    elif args.domain_type == 'gym':
+        env = FailOnTimelimit(gym.make(args.domain_name))
+        env.seed(seed)
+        channels_first = False
+    else:
+        raise ValueError(f'Unknown domain: type={args.domain_type} name={args.domain_name}')
+
+    # stack several consecutive frames together
+    if args.encoder_type == 'pixel':
+        env = utils.FrameStack(env, k=args.frame_stack, channels_first=channels_first)
+
+    return env
+
+
 def main():
     args = parse_args()
     utils.set_seed_everywhere(args.seed)
@@ -186,34 +271,8 @@ def main():
         name=args.run_name
     )
 
-    channels_first = True
-    if args.domain_name == 'lunarlander':
-        env = gym.make('LunarLanderContinuous-v2')
-        env = LunarLanderImgWrapper(env)
-        env.seed(args.seed)
-    elif args.domain_type == 'dmc':
-        env = dmc2gym.make(
-            domain_name=args.domain_name,
-            task_name=args.task_name,
-            seed=args.seed,
-            visualize_reward=False,
-            from_pixels=(args.encoder_type == 'pixel'),
-            height=args.image_size,
-            width=args.image_size,
-            frame_skip=args.action_repeat
-        )
-        env.seed(args.seed)
-    elif args.domain_type == 'cw':
-        config = OmegaConf.load(f'env/config/{args.domain_name}.yaml')
-        env = CwTargetEnv(config, args.seed)
-        env = TimeLimit(env, env.unwrapped._max_episode_length)
-        channels_first = False
-    else:
-        raise ValueError(f'Unknown domain: type={args.domain_type} name={args.domain_name}')
-
-    # stack several consecutive frames together
-    if args.encoder_type == 'pixel':
-        env = utils.FrameStack(env, k=args.frame_stack, channels_first=channels_first)
+    env = make_env(args, is_eval=False)
+    eval_env = make_env(args, is_eval=True)
 
     utils.make_dir(args.work_dir)
     video_dir = utils.make_dir(os.path.join(args.work_dir, 'video'))
@@ -228,12 +287,18 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # the dmc2gym wrapper standardizes actions
-    assert env.action_space.low.min() >= -1
-    assert env.action_space.high.max() <= 1
+    if isinstance(env.action_space, gym.spaces.Box):
+        assert env.action_space.low.min() >= -1
+        assert env.action_space.high.max() <= 1
+        action_shape = env.action_space.shape
+    elif isinstance(env.action_space, gym.spaces.Discrete):
+        action_shape = (1,)
+    else:
+        raise ValueError('Unexpected action space type:', type(env.action_space))
 
     replay_buffer = utils.ReplayBuffer(
         obs_shape=env.observation_space.shape,
-        action_shape=env.action_space.shape,
+        action_shape=action_shape,
         capacity=args.replay_buffer_capacity,
         batch_size=args.batch_size,
         device=device
@@ -241,7 +306,7 @@ def main():
 
     agent = make_agent(
         obs_shape=env.observation_space.shape,
-        action_shape=env.action_space.shape,
+        action_space=env.action_space,
         args=args,
         device=device
     )
@@ -251,7 +316,7 @@ def main():
     episode, episode_reward, done = 0, 0, True
     start_time = time.time()
     eval_step = 0
-    is_success = False
+    info = {'is_success': 0}
     for step in range(args.num_train_steps):
         if done:
             if step > 0:
@@ -263,21 +328,21 @@ def main():
             if step >= eval_step:
                 eval_step += args.eval_freq
                 L.log('eval/episode', episode, step)
-                evaluate(env, agent, video, args.num_eval_episodes, L, step)
+                evaluate(eval_env, agent, video, args.num_eval_episodes, L, step)
                 if args.save_model:
                     agent.save(model_dir, step)
                 if args.save_buffer:
                     replay_buffer.save(buffer_dir)
 
             L.log('train/episode_reward', episode_reward, step)
-            L.log('train/success_rate', is_success, step)
+            L.log('train/success_rate', int(info['is_success']), step)
 
             obs = env.reset()
             done = False
             episode_reward = 0
             episode_step = 0
             episode += 1
-            is_success = False
+            info = None
 
             L.log('train/episode', episode, step)
 
@@ -295,8 +360,6 @@ def main():
                 agent.update(replay_buffer, L, step)
 
         next_obs, reward, done, info = env.step(action)
-        if not is_success:
-            is_success = info['is_success']
 
         # allow infinit bootstrap
         done_bool = 0 if episode_step + 1 == env._max_episode_steps else float(
