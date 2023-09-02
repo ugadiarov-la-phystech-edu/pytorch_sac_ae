@@ -568,6 +568,7 @@ class SacAeAgentDiscrete(object):
         init_temperature=0.01,
         alpha_lr=1e-3,
         alpha_beta=0.9,
+        auto_alpha=True,
         actor_lr=1e-3,
         actor_beta=0.9,
         actor_update_freq=2,
@@ -616,8 +617,9 @@ class SacAeAgentDiscrete(object):
         # tie encoders between actor and critic
         self.actor.encoder.copy_conv_weights_from(self.critic.encoder)
 
+        self.auto_alpha = auto_alpha
         self.log_alpha = torch.tensor(np.log(init_temperature)).to(device)
-        self.log_alpha.requires_grad = True
+        self.log_alpha.requires_grad = self.auto_alpha
         # set target entropy to -|A|
         self.target_entropy = 0.98 * np.log(action_dim)
 
@@ -730,13 +732,14 @@ class SacAeAgentDiscrete(object):
 
         self.actor.log(L, step)
 
-        self.log_alpha_optimizer.zero_grad()
-        alpha_loss = (self.alpha *
-                      (entropy - self.target_entropy).detach()).mean()
-        L.log('train_alpha/loss', alpha_loss, step)
-        L.log('train_alpha/value', self.alpha, step)
-        alpha_loss.backward()
-        self.log_alpha_optimizer.step()
+        if self.auto_alpha:
+            self.log_alpha_optimizer.zero_grad()
+            alpha_loss = (self.alpha *
+                          (entropy - self.target_entropy).detach()).mean()
+            L.log('train_alpha/loss', alpha_loss, step)
+            L.log('train_alpha/value', self.alpha, step)
+            alpha_loss.backward()
+            self.log_alpha_optimizer.step()
 
     def update_decoder(self, obs, target_obs, L, step):
         h = self.critic.encoder(obs)

@@ -46,6 +46,16 @@ class FailOnTimelimit(gym.Wrapper):
         return observation, reward, done, info
 
 
+def str2bool(s):
+    """helper function used in order to support boolean command line arguments"""
+    if s.lower() in ("true", "t", "1"):
+        return True
+    elif s.lower() in ("false", "f", "0"):
+        return False
+    else:
+        return s
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     # environment
@@ -94,6 +104,7 @@ def parse_args():
     parser.add_argument('--init_temperature', default=0.1, type=float)
     parser.add_argument('--alpha_lr', default=1e-4, type=float)
     parser.add_argument('--alpha_beta', default=0.5, type=float)
+    parser.add_argument('--auto_alpha', default=True, choices=[False, True], metavar='False|True', type=str2bool)
     # misc
     parser.add_argument('--seed', default=1, type=int)
     parser.add_argument('--work_dir', default='.', type=str)
@@ -172,6 +183,7 @@ def make_agent(obs_shape, action_space, args, device):
                 init_temperature=args.init_temperature,
                 alpha_lr=args.alpha_lr,
                 alpha_beta=args.alpha_beta,
+                auto_alpha=args.auto_alpha,
                 actor_lr=args.actor_lr,
                 actor_beta=args.actor_beta,
                 actor_update_freq=args.actor_update_freq,
