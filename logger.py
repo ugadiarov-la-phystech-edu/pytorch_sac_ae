@@ -1,6 +1,7 @@
 import math
 from typing import Union, Optional, Tuple, List
 
+import wandb
 from torch.utils.tensorboard import SummaryWriter
 from collections import defaultdict
 import json
@@ -84,12 +85,13 @@ class MetersGroup(object):
 
     def dump(self, step, prefix):
         if len(self._meters) == 0:
-            return
+            return {}
         data = self._prime_meters()
         data['step'] = step
         self._dump_to_file(data)
         self._dump_to_console(data, prefix)
         self._meters.clear()
+        return data
 
 
 class Logger(object):
@@ -111,6 +113,8 @@ class Logger(object):
             formating=FORMAT_CONFIG[config]['eval']
         )
 
+        self.last_image_data = {}
+
     def _try_sw_log(self, key, value, step):
         if self._sw is not None:
             self._sw.add_scalar(key, value, step)
@@ -121,6 +125,8 @@ class Logger(object):
             with torch.no_grad():
                 grid = make_grid(image.unsqueeze(1))
             self._sw.add_image(key, grid, step)
+            self.last_image_data['step'] = step
+            self.last_image_data[key] = grid
 
     def _try_sw_log_video(self, key, frames, step):
         if self._sw is not None:
@@ -161,10 +167,17 @@ class Logger(object):
         assert key.startswith('train') or key.startswith('eval')
         self._try_sw_log_histogram(key, histogram, step)
 
-    def dump(self, step):
-        self._train_mg.dump(step, 'train')
-        self._eval_mg.dump(step, 'eval')
+    def dump(self, step, is_eval=False):
+        train_data = {f'train/{key}': value for key, value in self._train_mg.dump(step, 'train').items() if key != 'step'}
+        eval_data = {f'eval/{key}': value for key, value in self._eval_mg.dump(step, 'eval').items() if key != 'step'}
+        data = train_data
+        if is_eval:
+            data = train_data | eval_data
+            for key, image in self.last_image_data.items():
+                if key != 'step':
+                    data[key] = wandb.Image(image)
 
+        wandb.log(data)
 
 def make_grid(
     tensor: Union[torch.Tensor, List[torch.Tensor]],

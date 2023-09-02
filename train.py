@@ -126,7 +126,7 @@ def evaluate(env, agent, video, num_episodes, L, step):
         video.save('%d.mp4' % step)
         L.log('eval/episode_reward', episode_reward, step)
         L.log('eval/success_rate', int(info['is_success']), step)
-    L.dump(step)
+    L.dump(step, is_eval=True)
 
 
 def make_agent(obs_shape, action_space, args, device):
@@ -265,7 +265,7 @@ def main():
 
     run = wandb.init(
         project=args.project,
-        sync_tensorboard=True,  # auto-upload sb3's tensorboard metrics
+        sync_tensorboard=False,  # auto-upload sb3's tensorboard metrics
         monitor_gym=True,  # auto-upload the videos of agents playing the game
         save_code=True,  # optional
         name=args.run_name
@@ -316,26 +316,27 @@ def main():
     episode, episode_reward, done = 0, 0, True
     start_time = time.time()
     eval_step = 0
+    eval_episode = 0
     info = {'is_success': 0}
     for step in range(args.num_train_steps):
         if done:
-            if step > 0:
-                L.log('train/duration', time.time() - start_time, step)
-                start_time = time.time()
-                L.dump(step)
+            L.log('train/episode_reward', episode_reward, step)
+            L.log('train/success_rate', int(info['is_success']), step)
 
             # evaluate agent periodically
             if step >= eval_step:
                 eval_step += args.eval_freq
+                eval_episode += args.num_eval_episodes
                 L.log('eval/episode', episode, step)
                 evaluate(eval_env, agent, video, args.num_eval_episodes, L, step)
                 if args.save_model:
                     agent.save(model_dir, step)
                 if args.save_buffer:
                     replay_buffer.save(buffer_dir)
-
-            L.log('train/episode_reward', episode_reward, step)
-            L.log('train/success_rate', int(info['is_success']), step)
+            elif step > 0:
+                L.log('train/duration', time.time() - start_time, step)
+                start_time = time.time()
+                L.dump(step)
 
             obs = env.reset()
             done = False
