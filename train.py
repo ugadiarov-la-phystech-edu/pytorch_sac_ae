@@ -258,7 +258,7 @@ def make_env(args, is_eval=False):
         env = TimeLimit(env, env.unwrapped._max_episode_length)
         channels_first = False
     elif args.domain_type == 'gym':
-        env = GrayScaleObservation(FailOnTimelimit(gym.make(args.domain_name)), keep_dim=True)
+        env = FailOnTimelimit(gym.make(args.domain_name))
         env.seed(seed)
         channels_first = False
     else:
