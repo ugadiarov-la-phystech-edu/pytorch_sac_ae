@@ -11,7 +11,7 @@ import time
 import json
 import warnings
 
-from gym.wrappers import TimeLimit
+from gym.wrappers import TimeLimit, GrayScaleObservation
 from omegaconf import OmegaConf
 
 from env.cw_envs import CwTargetEnv
@@ -246,7 +246,7 @@ def make_env(args, is_eval=False):
         env = TimeLimit(env, env.unwrapped._max_episode_length)
         channels_first = False
     elif args.domain_type == 'gym':
-        env = FailOnTimelimit(gym.make(args.domain_name))
+        env = GrayScaleObservation(FailOnTimelimit(gym.make(args.domain_name)), keep_dim=True)
         env.seed(seed)
         channels_first = False
     else:
