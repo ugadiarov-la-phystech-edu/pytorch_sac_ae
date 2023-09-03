@@ -171,6 +171,7 @@ class Logger(object):
         train_data = {f'train/{key}': value for key, value in self._train_mg.dump(step, 'train').items() if key != 'step'}
         eval_data = {f'eval/{key}': value for key, value in self._eval_mg.dump(step, 'eval').items() if key != 'step'}
         data = train_data
+        data['global_step'] = step
         if is_eval:
             data = train_data | eval_data
             for key, image in self.last_image_data.items():
