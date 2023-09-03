@@ -87,6 +87,7 @@ def parse_args():
     parser.add_argument('--actor_log_std_min', default=-10, type=float)
     parser.add_argument('--actor_log_std_max', default=2, type=float)
     parser.add_argument('--actor_update_freq', default=2, type=int)
+    parser.add_argument('--actor_encoder', default=False, choices=[False, True], metavar='False|True', type=str2bool)
     # encoder/decoder
     parser.add_argument('--encoder_type', default='pixel', type=str)
     parser.add_argument('--encoder_feature_dim', default=50, type=int)
@@ -187,6 +188,7 @@ def make_agent(obs_shape, action_space, args, device):
                 actor_lr=args.actor_lr,
                 actor_beta=args.actor_beta,
                 actor_update_freq=args.actor_update_freq,
+                actor_encoder=args.actor_encoder,
                 critic_lr=args.critic_lr,
                 critic_beta=args.critic_beta,
                 critic_tau=args.critic_tau,

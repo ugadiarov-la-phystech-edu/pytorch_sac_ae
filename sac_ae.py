@@ -572,6 +572,7 @@ class SacAeAgentDiscrete(object):
         actor_lr=1e-3,
         actor_beta=0.9,
         actor_update_freq=2,
+        actor_encoder=False,
         critic_lr=1e-3,
         critic_beta=0.9,
         critic_tau=0.005,
@@ -596,6 +597,7 @@ class SacAeAgentDiscrete(object):
         self.critic_target_update_freq = critic_target_update_freq
         self.decoder_update_freq = decoder_update_freq
         self.decoder_latent_lambda = decoder_latent_lambda
+        self.actor_encoder = actor_encoder
 
         self.actor = ActorDiscrete(
             obs_shape, action_dim, hidden_dim, encoder_type,
@@ -607,15 +609,20 @@ class SacAeAgentDiscrete(object):
             encoder_feature_dim, num_layers, num_filters
         ).to(device)
 
+        # tie encoders between actor and critic
+        if self.actor_encoder:
+            self.critic.encoder.copy_conv_weights_from(self.actor.encoder)
+            encoder = self.actor.encoder
+        else:
+            self.actor.encoder.copy_conv_weights_from(self.critic.encoder)
+            encoder = self.critic.encoder
+
         self.critic_target = CriticDiscrete(
             obs_shape, action_dim, hidden_dim, encoder_type,
             encoder_feature_dim, num_layers, num_filters
         ).to(device)
 
         self.critic_target.load_state_dict(self.critic.state_dict())
-
-        # tie encoders between actor and critic
-        self.actor.encoder.copy_conv_weights_from(self.critic.encoder)
 
         self.auto_alpha = auto_alpha
         self.log_alpha = torch.tensor(np.log(init_temperature)).to(device)
@@ -634,7 +641,7 @@ class SacAeAgentDiscrete(object):
 
             # optimizer for critic encoder for reconstruction loss
             self.encoder_optimizer = torch.optim.Adam(
-                self.critic.encoder.parameters(), lr=encoder_lr
+                encoder.parameters(), lr=encoder_lr
             )
 
             # optimizer for decoder
@@ -690,13 +697,13 @@ class SacAeAgentDiscrete(object):
 
     def update_critic(self, obs, action, reward, next_obs, not_done, L, step):
         with torch.no_grad():
-            _, pi, log_pi = self.actor(next_obs)
-            target_Q1, target_Q2 = self.critic_target(next_obs, action=None)
+            _, pi, log_pi = self.actor(next_obs, detach_encoder=True)
+            target_Q1, target_Q2 = self.critic_target(next_obs, action=None, detach_encoder=True)
             target_V = torch.sum(pi * (torch.min(target_Q1, target_Q2) - self.alpha.detach() * log_pi), dim=1, keepdim=True)
             target_Q = reward + (not_done * self.discount * target_V)
 
         # get current Q estimates
-        current_Q1, current_Q2 = self.critic(obs, action=None)
+        current_Q1, current_Q2 = self.critic(obs, action=None, detach_encoder=self.actor_encoder)
         current_Q1 = current_Q1.gather(1, action.long())
         current_Q2 = current_Q2.gather(1, action.long())
         critic_loss = F.mse_loss(current_Q1,
@@ -713,7 +720,7 @@ class SacAeAgentDiscrete(object):
 
     def update_actor_and_alpha(self, obs, L, step):
         # detach encoder, so we don't update it with the actor loss
-        _, pi, log_pi = self.actor(obs, detach_encoder=True)
+        _, pi, log_pi = self.actor(obs, detach_encoder=not self.actor_encoder)
         actor_Q1, actor_Q2 = self.critic(obs, action=None, detach_encoder=True)
 
         actor_Q = torch.min(actor_Q1, actor_Q2)
@@ -742,7 +749,11 @@ class SacAeAgentDiscrete(object):
             self.log_alpha_optimizer.step()
 
     def update_decoder(self, obs, target_obs, L, step):
-        h = self.critic.encoder(obs)
+        if self.actor_encoder:
+            encoder = self.actor.encoder
+        else:
+            encoder = self.critic.encoder
+        h = encoder(obs)
 
         if target_obs.dim() == 4:
             # preprocess images to be in [-0.5, 0.5] range
