@@ -173,7 +173,7 @@ class Logger(object):
         data = train_data
         data['global_step'] = step
         if is_eval:
-            data = train_data | eval_data
+            data = {**train_data, **eval_data}
             for key, image in self.last_image_data.items():
                 if key != 'step':
                     data[key] = wandb.Image(image)
