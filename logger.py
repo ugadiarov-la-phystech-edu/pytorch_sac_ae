@@ -164,8 +164,9 @@ class Logger(object):
         self._try_sw_log_video(key, frames, step)
 
     def log_histogram(self, key, histogram, step):
-        assert key.startswith('train') or key.startswith('eval')
-        self._try_sw_log_histogram(key, histogram, step)
+        pass
+        # assert key.startswith('train') or key.startswith('eval')
+        # self._try_sw_log_histogram(key, histogram, step)
 
     def dump(self, step, is_eval=False):
         train_data = {f'train/{key}': value for key, value in self._train_mg.dump(step, 'train').items() if key != 'step'}
