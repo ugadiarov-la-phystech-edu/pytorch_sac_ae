@@ -1,3 +1,5 @@
+from typing import Tuple
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -11,6 +13,46 @@ from encoder import make_encoder
 from decoder import make_decoder
 
 LOG_FREQ = 10000
+
+
+def gumbel_softmax(logits: torch.Tensor, tau: float = 1, hard: bool = False, compute_log_prob: bool = True,
+                   dim: int = -1) -> Tuple[torch.Tensor, torch.Tensor]:
+    r"""
+    Samples from the Gumbel-Softmax distribution (`Link 1`_  `Link 2`_) and optionally discretizes.
+
+    Args:
+      logits: `[..., num_features]` unnormalized log probabilities
+      tau: non-negative scalar temperature
+      hard: if ``True``, the returned samples will be discretized as one-hot vectors,
+            but will be differentiated as if it is the soft sample in autograd
+      compute_log_prob: if ``True``, the logarithm of probability of sample is returned
+      dim (int): A dimension along which softmax will be computed. Default: -1.
+
+    Returns:
+      Sampled tensor of same shape as `logits` from the Gumbel-Softmax distribution with its log probabilities.
+      If ``hard=True``, the returned samples will be one-hot, otherwise they will
+      be probability distributions that sum to 1 across `dim`.
+    """
+
+    gumbels = (
+        -torch.empty_like(logits, memory_format=torch.legacy_contiguous_format).exponential_().log()
+    )  # ~Gumbel(0,1)
+    gumbels = (logits + gumbels) / tau  # ~Gumbel(logits,tau)
+    y_soft = gumbels.softmax(dim)
+
+    if hard:
+        # Straight through.
+        index = y_soft.max(dim, keepdim=True)[1]
+        y_hard = torch.zeros_like(logits, memory_format=torch.legacy_contiguous_format).scatter_(dim, index, 1.0)
+        ret = y_hard - y_soft.detach() + y_soft
+    else:
+        # Reparametrization trick.
+        ret = y_soft
+
+    log_prob = None
+    if compute_log_prob:
+        log_prob = -torch.sum(-ret * F.log_softmax(logits, dim=dim), dim=dim)
+    return ret, log_prob
 
 
 def gaussian_logprob(noise, log_std):
@@ -120,9 +162,13 @@ class ActorDiscrete(nn.Module):
     """MLP actor network."""
     def __init__(
         self, obs_shape, action_dim, hidden_dim, encoder_type,
-        encoder_feature_dim, num_layers, num_filters
+        encoder_feature_dim, num_layers, num_filters, gumbel='none', temperature=1.0,
     ):
         super().__init__()
+        self.gumbel = gumbel
+        if gumbel not in ('none', 'soft', 'hard'):
+            raise ValueError(f'Unexpected value of gumbel parameter:', gumbel)
+        self.temperature = temperature
 
         self.encoder = make_encoder(
             encoder_type, obs_shape, encoder_feature_dim, num_layers,
@@ -147,10 +193,15 @@ class ActorDiscrete(nn.Module):
 
         pi = None
         log_pi = None
-        if compute_pi:
-            pi = F.softmax(logit, dim=1)
-        if compute_log_pi:
-            log_pi = F.log_softmax(logit, dim=1)
+        if self.gumbel == 'none':
+            if compute_pi:
+                pi = F.softmax(logit, dim=1)
+            if compute_log_pi:
+                log_pi = F.log_softmax(logit, dim=1)
+        else:
+            if compute_pi:
+                pi, log_pi = gumbel_softmax(logit, self.temperature, hard=self.gumbel == 'hard',
+                                            compute_log_prob=compute_log_pi, dim=1)
 
         return logit, pi, log_pi
 
@@ -253,19 +304,26 @@ class CriticDiscrete(nn.Module):
     """Critic network, employes two q-functions."""
     def __init__(
         self, obs_shape, action_dim, hidden_dim, encoder_type,
-        encoder_feature_dim, num_layers, num_filters
+        encoder_feature_dim, num_layers, num_filters, gumbel='none'
     ):
         super().__init__()
+        self.gumbel = gumbel
+        assert gumbel in ('none', 'soft', 'hard')
 
         self.encoder = make_encoder(
             encoder_type, obs_shape, encoder_feature_dim, num_layers,
             num_filters
         )
 
-        self.Q1 = QFunctionDiscrete(
+        if self.gumbel != 'none':
+            clazz = QFunction
+        else:
+            clazz = QFunctionDiscrete
+
+        self.Q1 = clazz(
             self.encoder.feature_dim, action_dim, hidden_dim
         )
-        self.Q2 = QFunctionDiscrete(
+        self.Q2 = clazz(
             self.encoder.feature_dim, action_dim, hidden_dim
         )
 
@@ -600,8 +658,11 @@ class SacAeAgentDiscrete(object):
         decoder_latent_lambda=0.0,
         decoder_weight_lambda=0.0,
         num_layers=4,
-        num_filters=32
+        num_filters=32,
+        gumbel='none',
+        temperature=1.0,
     ):
+        self.action_dim = action_dim
         self.device = device
         self.discount = discount
         self.critic_tau = critic_tau
@@ -611,15 +672,17 @@ class SacAeAgentDiscrete(object):
         self.decoder_update_freq = decoder_update_freq
         self.decoder_latent_lambda = decoder_latent_lambda
         self.actor_encoder = actor_encoder
+        self.gumbel = gumbel
+        self.temperature = temperature
 
         self.actor = ActorDiscrete(
             obs_shape, action_dim, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters
+            encoder_feature_dim, num_layers, num_filters, self.gumbel, self.temperature
         ).to(device)
 
         self.critic = CriticDiscrete(
             obs_shape, action_dim, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters
+            encoder_feature_dim, num_layers, num_filters, self.gumbel
         ).to(device)
 
         # tie encoders between actor and critic
@@ -632,7 +695,7 @@ class SacAeAgentDiscrete(object):
 
         self.critic_target = CriticDiscrete(
             obs_shape, action_dim, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters
+            encoder_feature_dim, num_layers, num_filters, self.gumbel
         ).to(device)
 
         self.critic_target.load_state_dict(self.critic.state_dict())
@@ -704,21 +767,35 @@ class SacAeAgentDiscrete(object):
         with torch.no_grad():
             obs = torch.FloatTensor(obs).to(self.device)
             obs = obs.unsqueeze(0)
-            _, pi, _ = self.actor(obs, compute_log_pi=False)
+            if self.gumbel != 'none':
+                logit, _, _ = self.actor(
+                    obs, compute_pi=False, compute_log_pi=False
+                )
+                pi = F.softmax(logit, dim=1)
+            else:
+                _, pi, _ = self.actor(obs, compute_log_pi=False)
             action = Categorical(pi).sample()
             return action.item()
 
     def update_critic(self, obs, action, reward, next_obs, not_done, L, step):
         with torch.no_grad():
             _, pi, log_pi = self.actor(next_obs, detach_encoder=True)
-            target_Q1, target_Q2 = self.critic_target(next_obs, action=None, detach_encoder=True)
-            target_V = torch.sum(pi * (torch.min(target_Q1, target_Q2) - self.alpha.detach() * log_pi), dim=1, keepdim=True)
+            if self.gumbel != 'none':
+                target_Q1, target_Q2 = self.critic_target(next_obs, action=pi, detach_encoder=True)
+                target_V = torch.min(target_Q1, target_Q2) - self.alpha.detach() * log_pi.unsqueeze(dim=1)
+            else:
+                target_Q1, target_Q2 = self.critic_target(next_obs, action=None, detach_encoder=True)
+                target_V = torch.sum(pi * (torch.min(target_Q1, target_Q2) - self.alpha.detach() * log_pi), dim=1, keepdim=True)
             target_Q = reward + (not_done * self.discount * target_V)
 
         # get current Q estimates
-        current_Q1, current_Q2 = self.critic(obs, action=None, detach_encoder=self.actor_encoder)
-        current_Q1 = current_Q1.gather(1, action.long())
-        current_Q2 = current_Q2.gather(1, action.long())
+        if self.gumbel != 'none':
+            action = F.one_hot(action.squeeze(dim=1).long(), num_classes=self.action_dim).to(torch.float32).to(self.device)
+            current_Q1, current_Q2 = self.critic(obs, action=action, detach_encoder=self.actor_encoder)
+        else:
+            current_Q1, current_Q2 = self.critic(obs, action=None, detach_encoder=self.actor_encoder)
+            current_Q1 = current_Q1.gather(1, action.long())
+            current_Q2 = current_Q2.gather(1, action.long())
         critic_loss = F.mse_loss(current_Q1,
                                  target_Q) + F.mse_loss(current_Q2, target_Q)
         L.log('train_critic/loss', critic_loss, step)
@@ -733,17 +810,27 @@ class SacAeAgentDiscrete(object):
 
     def update_actor_and_alpha(self, obs, L, step):
         # detach encoder, so we don't update it with the actor loss
-        _, pi, log_pi = self.actor(obs, detach_encoder=not self.actor_encoder)
-        actor_Q1, actor_Q2 = self.critic(obs, action=None, detach_encoder=True)
+        logit, pi, log_pi = self.actor(obs, detach_encoder=not self.actor_encoder)
+        if self.gumbel != 'none':
+            actor_Q1, actor_Q2 = self.critic(obs, action=pi, detach_encoder=True)
+        else:
+            actor_Q1, actor_Q2 = self.critic(obs, action=None, detach_encoder=True)
 
         actor_Q = torch.min(actor_Q1, actor_Q2)
-        actor_loss = pi * (self.alpha.detach() * log_pi - actor_Q)
-        actor_loss = actor_loss.sum(dim=1).mean()
+        actor_loss = self.alpha.detach() * log_pi.unsqueeze(dim=1) - actor_Q
+        if self.gumbel == 'none':
+            actor_loss = pi * actor_loss
+            actor_loss = actor_loss.sum(dim=1)
+        actor_loss = actor_loss.mean()
 
         L.log('train_actor/loss', actor_loss, step)
         L.log('train_actor/target_entropy', self.target_entropy, step)
-        entropy = -torch.sum(pi * log_pi, dim=1)
-        L.log('train_actor/entropy', entropy.mean(), step)
+        if self.gumbel != 'none':
+            L.log('train_actor/entropy', -log_pi.mean(), step)
+            L.log('train_actor/entropy_orig', -torch.sum(F.softmax(logit, dim=1) * F.log_softmax(logit, dim=1), dim=1).mean(), step)
+        else:
+            entropy = -torch.sum(pi * log_pi, dim=1)
+            L.log('train_actor/entropy', entropy.mean(), step)
 
         # optimize the actor
         self.actor_optimizer.zero_grad()
@@ -754,8 +841,10 @@ class SacAeAgentDiscrete(object):
 
         if self.auto_alpha:
             self.log_alpha_optimizer.zero_grad()
-            alpha_loss = (self.alpha *
-                          (entropy - self.target_entropy).detach()).mean()
+            if self.gumbel != 'none':
+                alpha_loss = (self.alpha * (-log_pi - self.target_entropy).detach()).mean()
+            else:
+                alpha_loss = (self.alpha * (entropy - self.target_entropy).detach()).mean()
             L.log('train_alpha/loss', alpha_loss, step)
             L.log('train_alpha/value', self.alpha, step)
             alpha_loss.backward()
