@@ -531,16 +531,29 @@ class SacAeAgent(object):
             self.update_decoder(obs, obs, L, step)
 
     def save(self, model_dir, step):
+        if step is not None:
+            step_suffix = f'_{step}'
+        else:
+            step_suffix = ''
+
         torch.save(
-            self.actor.state_dict(), '%s/actor_%s.pt' % (model_dir, step)
+            self.actor.state_dict(), f'{model_dir}/actor{step_suffix}.pt'
         )
         torch.save(
-            self.critic.state_dict(), '%s/critic_%s.pt' % (model_dir, step)
+            self.critic.state_dict(), f'{model_dir}/critic{step_suffix}.pt'
+        )
+        torch.save(
+            self.actor_optimizer.state_dict(), f'{model_dir}/actor_optimizer{step_suffix}.pt'
+        )
+        torch.save(
+            self.critic_optimizer.state_dict(), f'{model_dir}/critic_optimizer{step_suffix}.pt'
+        )
+        torch.save(
+            self.log_alpha_optimizer.state_dict(), f'{model_dir}/log_alpha_optimizer{step_suffix}.pt'
         )
         if self.decoder is not None:
             torch.save(
-                self.decoder.state_dict(),
-                '%s/decoder_%s.pt' % (model_dir, step)
+                self.decoder.state_dict(), f'{model_dir}/decoder{step_suffix}.pt'
             )
 
     def load(self, model_dir, step):
@@ -802,16 +815,29 @@ class SacAeAgentDiscrete(object):
             self.update_decoder(obs, obs, L, step)
 
     def save(self, model_dir, step):
+        if step is not None:
+            step_suffix = f'_{step}'
+        else:
+            step_suffix = ''
+
         torch.save(
-            self.actor.state_dict(), '%s/actor_%s.pt' % (model_dir, step)
+            self.actor.state_dict(), f'{model_dir}/actor{step_suffix}.pt'
         )
         torch.save(
-            self.critic.state_dict(), '%s/critic_%s.pt' % (model_dir, step)
+            self.critic.state_dict(), f'{model_dir}/critic{step_suffix}.pt'
+        )
+        torch.save(
+            self.actor_optimizer.state_dict(), f'{model_dir}/actor_optimizer{step_suffix}.pt'
+        )
+        torch.save(
+            self.critic_optimizer.state_dict(), f'{model_dir}/critic_optimizer{step_suffix}.pt'
+        )
+        torch.save(
+            self.log_alpha_optimizer.state_dict(), f'{model_dir}/log_alpha_optimizer{step_suffix}.pt'
         )
         if self.decoder is not None:
             torch.save(
-                self.decoder.state_dict(),
-                '%s/decoder_%s.pt' % (model_dir, step)
+                self.decoder.state_dict(), f'{model_dir}/decoder{step_suffix}.pt'
             )
 
     def load(self, model_dir, step):

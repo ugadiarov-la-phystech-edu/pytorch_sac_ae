@@ -120,7 +120,12 @@ def parse_args():
     return args
 
 
-def evaluate(env, agent, video, num_episodes, L, step):
+def evaluate(env, agent, video, num_episodes, L, step, deterministic):
+    if deterministic:
+        tag = 'deterministic'
+    else:
+        tag = 'non-deterministic'
+
     for i in range(num_episodes):
         obs = env.reset()
         video.init(enabled=(i == 0))
@@ -130,15 +135,17 @@ def evaluate(env, agent, video, num_episodes, L, step):
         video.record(env)
         while not done:
             with utils.eval_mode(agent):
-                action = agent.select_action(obs)
+                if deterministic:
+                    action = agent.select_action(obs)
+                else:
+                    action = agent.sample_action(obs)
             obs, reward, done, info = env.step(action)
             video.record(env)
             episode_reward += reward
 
-        video.save('%d.mp4' % step)
-        L.log('eval/episode_reward', episode_reward, step)
-        L.log('eval/success_rate', int(info['is_success']), step)
-    L.dump(step, is_eval=True)
+        video.save(f'{step}_{tag}.mp4')
+        L.log(f'eval/episode_reward_{tag}', episode_reward, step)
+        L.log(f'eval/success_rate_{tag}', int(info['is_success']), step)
 
 
 def make_agent(obs_shape, action_space, args, device):
@@ -342,9 +349,11 @@ def main():
                 eval_step += args.eval_freq
                 eval_episode += args.num_eval_episodes
                 L.log('eval/episode', episode, step)
-                evaluate(eval_env, agent, video, args.num_eval_episodes, L, step)
+                evaluate(eval_env, agent, video, args.num_eval_episodes, L, step, deterministic=True)
+                evaluate(eval_env, agent, video, args.num_eval_episodes, L, step, deterministic=False)
+                L.dump(step, is_eval=True)
                 if args.save_model:
-                    agent.save(model_dir, step)
+                    agent.save(model_dir, step=None)
                 if args.save_buffer:
                     replay_buffer.save(buffer_dir)
             elif step > 0:
