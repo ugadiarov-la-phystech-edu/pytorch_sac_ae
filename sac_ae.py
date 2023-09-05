@@ -942,10 +942,12 @@ class SacAeAgentDiscrete(object):
         torch.save(
             self.log_alpha_optimizer.state_dict(), f'{model_dir}/log_alpha_optimizer{step_suffix}.pt'
         )
-        if self.decoder is not None:
-            torch.save(
-                self.decoder.state_dict(), f'{model_dir}/decoder{step_suffix}.pt'
-            )
+        for key in self.encoder_optimizers.keys():
+            torch.save(self.encoder_optimizers[key].state_dict(), f'{model_dir}/encoder_optimizer_{key}{step_suffix}.pt')
+
+        for key in self.decoders.keys():
+            torch.save(self.decoders[key].state_dict(), f'{model_dir}/decoder_{key}{step_suffix}.pt')
+            torch.save(self.decoder_optimizers[key].state_dict(), f'{model_dir}/decoder_optimizer_{key}{step_suffix}.pt')
 
     def load(self, model_dir, step):
         self.actor.load_state_dict(
