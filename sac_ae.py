@@ -652,7 +652,7 @@ class SacAeAgentDiscrete(object):
         actor_lr=1e-3,
         actor_beta=0.9,
         actor_update_freq=2,
-        actor_encoder=False,
+        encoder='critic',
         critic_lr=1e-3,
         critic_beta=0.9,
         critic_tau=0.005,
@@ -680,7 +680,7 @@ class SacAeAgentDiscrete(object):
         self.critic_target_update_freq = critic_target_update_freq
         self.decoder_update_freq = decoder_update_freq
         self.decoder_latent_lambda = decoder_latent_lambda
-        self.actor_encoder = actor_encoder
+        self.encoder = encoder
         self.gumbel = gumbel
         self.temperature = temperature
 
@@ -694,13 +694,19 @@ class SacAeAgentDiscrete(object):
             encoder_feature_dim, num_layers, num_filters, self.gumbel
         ).to(device)
 
+        self.encoders = {}
         # tie encoders between actor and critic
-        if self.actor_encoder:
+        if self.encoder == 'actor':
             self.critic.encoder.copy_conv_weights_from(self.actor.encoder)
             encoder = self.actor.encoder
-        else:
+            self.encoders['actor'] = encoder
+        elif encoder == 'critic':
             self.actor.encoder.copy_conv_weights_from(self.critic.encoder)
             encoder = self.critic.encoder
+            self.encoders['critic'] = encoder
+        elif encoder == 'both':
+            self.encoders['actor'] = self.actor.encoder
+            self.encoders['critic'] = self.critic.encoder
 
         self.critic_target = CriticDiscrete(
             obs_shape, action_dim, hidden_dim, encoder_type,
@@ -715,26 +721,30 @@ class SacAeAgentDiscrete(object):
         # set target entropy to -|A|
         self.target_entropy = 0.98 * np.log(action_dim)
 
-        self.decoder = None
+        self.decoders = {}
+        self.encoder_optimizers = {}
+        self.decoder_optimizers = {}
         if decoder_type != 'identity':
-            # create decoder
-            self.decoder = make_decoder(
-                decoder_type, obs_shape, encoder_feature_dim, num_layers,
-                num_filters
-            ).to(device)
-            self.decoder.apply(weight_init)
+            for key in self.encoders.keys():
+                # create decoder
+                decoder = make_decoder(
+                    decoder_type, obs_shape, encoder_feature_dim, num_layers,
+                    num_filters
+                ).to(device)
+                decoder.apply(weight_init)
+                self.decoders[key] = decoder
 
-            # optimizer for critic encoder for reconstruction loss
-            self.encoder_optimizer = torch.optim.Adam(
-                encoder.parameters(), lr=encoder_lr
-            )
+                # optimizer for critic encoder for reconstruction loss
+                self.encoder_optimizers[key] = torch.optim.Adam(
+                    self.encoders[key].parameters(), lr=encoder_lr
+                )
 
-            # optimizer for decoder
-            self.decoder_optimizer = torch.optim.Adam(
-                self.decoder.parameters(),
-                lr=decoder_lr,
-                weight_decay=decoder_weight_lambda
-            )
+                # optimizer for decoder
+                self.decoder_optimizers[key] = torch.optim.Adam(
+                    self.decoders[key].parameters(),
+                    lr=decoder_lr,
+                    weight_decay=decoder_weight_lambda
+                )
 
         # optimizers
         self.actor_optimizer = torch.optim.Adam(
@@ -756,8 +766,8 @@ class SacAeAgentDiscrete(object):
         self.training = training
         self.actor.train(training)
         self.critic.train(training)
-        if self.decoder is not None:
-            self.decoder.train(training)
+        for decoder in self.decoders.values():
+            decoder.train(training)
 
     @property
     def alpha(self):
@@ -800,9 +810,9 @@ class SacAeAgentDiscrete(object):
         # get current Q estimates
         if self.gumbel != 'none':
             action = F.one_hot(action.squeeze(dim=1).long(), num_classes=self.action_dim).to(torch.float32).to(self.device)
-            current_Q1, current_Q2 = self.critic(obs, action=action, detach_encoder=self.actor_encoder)
+            current_Q1, current_Q2 = self.critic(obs, action=action, detach_encoder=self.encoder == 'actor')
         else:
-            current_Q1, current_Q2 = self.critic(obs, action=None, detach_encoder=self.actor_encoder)
+            current_Q1, current_Q2 = self.critic(obs, action=None, detach_encoder=self.encoder == 'actor')
             current_Q1 = current_Q1.gather(1, action.long())
             current_Q2 = current_Q2.gather(1, action.long())
         critic_loss = F.mse_loss(current_Q1,
@@ -819,7 +829,7 @@ class SacAeAgentDiscrete(object):
 
     def update_actor_and_alpha(self, obs, L, step):
         # detach encoder, so we don't update it with the actor loss
-        logit, pi, log_pi = self.actor(obs, detach_encoder=not self.actor_encoder)
+        logit, pi, log_pi = self.actor(obs, detach_encoder=self.encoder == 'critic')
         if self.gumbel != 'none':
             actor_Q1, actor_Q2 = self.critic(obs, action=pi, detach_encoder=True)
         else:
@@ -860,32 +870,31 @@ class SacAeAgentDiscrete(object):
             self.log_alpha_optimizer.step()
 
     def update_decoder(self, obs, target_obs, L, step):
-        if self.actor_encoder:
-            encoder = self.actor.encoder
-        else:
-            encoder = self.critic.encoder
-        h = encoder(obs)
+        for key in self.encoders.keys():
+            encoder = self.encoders[key]
+            decoder = self.decoders[key]
+            h = encoder(obs)
 
-        if target_obs.dim() == 4:
-            # preprocess images to be in [-0.5, 0.5] range
-            target_obs = utils.preprocess_obs(target_obs)
-        rec_obs = self.decoder(h)
-        rec_loss = F.mse_loss(target_obs, rec_obs)
+            if target_obs.dim() == 4:
+                # preprocess images to be in [-0.5, 0.5] range
+                target_obs = utils.preprocess_obs(target_obs)
+            rec_obs = decoder(h)
+            rec_loss = F.mse_loss(target_obs, rec_obs)
 
-        # add L2 penalty on latent representation
-        # see https://arxiv.org/pdf/1903.12436.pdf
-        latent_loss = (0.5 * h.pow(2).sum(1)).mean()
+            # add L2 penalty on latent representation
+            # see https://arxiv.org/pdf/1903.12436.pdf
+            latent_loss = (0.5 * h.pow(2).sum(1)).mean()
 
-        loss = rec_loss + self.decoder_latent_lambda * latent_loss
-        self.encoder_optimizer.zero_grad()
-        self.decoder_optimizer.zero_grad()
-        loss.backward()
+            loss = rec_loss + self.decoder_latent_lambda * latent_loss
+            self.encoder_optimizers[key].zero_grad()
+            self.decoder_optimizers[key].zero_grad()
+            loss.backward()
 
-        self.encoder_optimizer.step()
-        self.decoder_optimizer.step()
-        L.log('train_ae/ae_loss', loss, step)
+            self.encoder_optimizers[key].step()
+            self.decoder_optimizers[key].step()
+            L.log('train_ae/ae_loss', loss, step)
 
-        self.decoder.log(L, step, log_freq=LOG_FREQ)
+            decoder.log(L, step, log_freq=LOG_FREQ, tag=key)
 
     def update(self, replay_buffer, L, step):
         obs, action, reward, next_obs, not_done = replay_buffer.sample()
@@ -909,7 +918,7 @@ class SacAeAgentDiscrete(object):
                 self.encoder_tau
             )
 
-        if self.decoder is not None and step % self.decoder_update_freq == 0:
+        if len(self.decoders) > 0 and step % self.decoder_update_freq == 0:
             self.update_decoder(obs, obs, L, step)
 
     def save(self, model_dir, step):

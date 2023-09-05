@@ -46,20 +46,20 @@ class PixelDecoder(nn.Module):
 
         return obs
 
-    def log(self, L, step, log_freq):
+    def log(self, L, step, log_freq, tag):
         if step % log_freq != 0:
             return
 
         for k, v in self.outputs.items():
-            L.log_histogram('train_decoder/%s_hist' % k, v, step)
+            L.log_histogram(f'train_decoder_{tag}/{k}_hist', v, step)
             if len(v.shape) > 2:
-                L.log_image('train_decoder/%s_i' % k, v[0], step)
+                L.log_image(f'train_decoder_{tag}/{k}_i', v[0], step)
 
         for i in range(self.num_layers):
             L.log_param(
-                'train_decoder/deconv%s' % (i + 1), self.deconvs[i], step
+                f'train_decoder_{tag}/deconv{i + 1}', self.deconvs[i], step
             )
-        L.log_param('train_decoder/fc', self.fc, step)
+        L.log_param(f'train_decoder_{tag}/fc', self.fc, step)
 
 
 _AVAILABLE_DECODERS = {'pixel': PixelDecoder}
