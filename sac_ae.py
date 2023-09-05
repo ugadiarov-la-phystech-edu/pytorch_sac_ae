@@ -166,7 +166,7 @@ class ActorDiscrete(nn.Module):
     ):
         super().__init__()
         self.gumbel = gumbel
-        if gumbel not in ('none', 'soft', 'hard'):
+        if gumbel not in ('none', 'soft', 'hard', 'straight-through'):
             raise ValueError(f'Unexpected value of gumbel parameter:', gumbel)
         self.temperature = temperature
 
@@ -193,11 +193,20 @@ class ActorDiscrete(nn.Module):
 
         pi = None
         log_pi = None
-        if self.gumbel == 'none':
+        if self.gumbel == 'none' or self.gumbel == 'straight-through':
             if compute_pi:
                 pi = F.softmax(logit, dim=1)
-            if compute_log_pi:
-                log_pi = F.log_softmax(logit, dim=1)
+                if compute_log_pi:
+                    log_pi = F.log_softmax(logit, dim=1)
+
+                if self.gumbel == 'straight-through':
+                    m = torch.distributions.Categorical(probs=pi)
+                    sample = m.sample().to(logit.device)
+                    one_hot = F.one_hot(sample, num_classes=logit.size()[1]).to(torch.float32)
+                    pi = one_hot + pi - pi.detach()
+                    if compute_log_pi:
+                        log_pi = log_pi.gather(1, sample.unsqueeze(-1)).squeeze(dim=1)
+
         else:
             if compute_pi:
                 pi, log_pi = gumbel_softmax(logit, self.temperature, hard=self.gumbel == 'hard',
@@ -308,7 +317,7 @@ class CriticDiscrete(nn.Module):
     ):
         super().__init__()
         self.gumbel = gumbel
-        assert gumbel in ('none', 'soft', 'hard')
+        assert gumbel in ('none', 'soft', 'hard', 'straight-through')
 
         self.encoder = make_encoder(
             encoder_type, obs_shape, encoder_feature_dim, num_layers,
