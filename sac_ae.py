@@ -852,6 +852,7 @@ class SacAeAgentDiscrete(object):
         L.log('train_actor/loss', actor_loss, step)
         L.log('train_actor/target_entropy', self.entropy_scheduler.get_target_entropy(), step)
         if self.gumbel != 'none':
+            entropy = -torch.sum(F.softmax(logit, dim=1) * F.log_softmax(logit, dim=1), dim=1)
             L.log('train_actor/entropy', -log_pi.mean(), step)
             L.log('train_actor/entropy_orig', -torch.sum(F.softmax(logit, dim=1) * F.log_softmax(logit, dim=1), dim=1).mean(), step)
         else:
@@ -875,6 +876,9 @@ class SacAeAgentDiscrete(object):
             L.log('train_alpha/value', self.alpha, step)
             alpha_loss.backward()
             self.log_alpha_optimizer.step()
+
+        self.entropy_scheduler.update(entropy.mean().item())
+        self.entropy_scheduler.log(L, step)
 
     def update_decoder(self, obs, target_obs, L, step):
         for key in self.encoders.keys():

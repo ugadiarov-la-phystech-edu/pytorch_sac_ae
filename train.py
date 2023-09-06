@@ -391,9 +391,6 @@ def main():
         else:
             with utils.eval_mode(agent):
                 action, entropy = agent.sample_action(obs, return_entropy=True)
-                if step >= args.init_steps:
-                    agent.entropy_scheduler.update(entropy)
-                    agent.entropy_scheduler.log(L, step)
 
         # run training update
         if step >= args.init_steps:
