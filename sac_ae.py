@@ -643,6 +643,7 @@ class SacAeAgentDiscrete(object):
         obs_shape,
         action_dim,
         device,
+        entropy_scheduler,
         hidden_dim=256,
         discount=0.99,
         init_temperature=0.01,
@@ -683,6 +684,7 @@ class SacAeAgentDiscrete(object):
         self.encoder = encoder
         self.gumbel = gumbel
         self.temperature = temperature
+        self.entropy_scheduler = entropy_scheduler
 
         self.actor = ActorDiscrete(
             obs_shape, action_dim, hidden_dim, encoder_type,
@@ -719,7 +721,7 @@ class SacAeAgentDiscrete(object):
         self.log_alpha = torch.tensor(np.log(init_temperature)).to(device)
         self.log_alpha.requires_grad = self.auto_alpha > 0
         # set target entropy to -|A|
-        self.target_entropy = 0.98 * np.log(action_dim) * self.auto_alpha
+        self.entropy_scheduler.set_target_entropy(0.98 * np.log(action_dim) * self.auto_alpha)
 
         self.decoders = {}
         self.encoder_optimizers = {}
@@ -782,19 +784,24 @@ class SacAeAgentDiscrete(object):
             )
             return logit.max(dim=1).indices.item()
 
-    def sample_action(self, obs):
+    def sample_action(self, obs, return_entropy=False):
         with torch.no_grad():
             obs = torch.FloatTensor(obs).to(self.device)
             obs = obs.unsqueeze(0)
             if self.gumbel != 'none':
-                logit, _, _ = self.actor(
-                    obs, compute_pi=False, compute_log_pi=False
+                logit, _, log_pi = self.actor(
+                    obs, compute_pi=return_entropy, compute_log_pi=return_entropy
                 )
                 pi = F.softmax(logit, dim=1)
             else:
-                _, pi, _ = self.actor(obs, compute_log_pi=False)
+                _, pi, log_pi = self.actor(obs, compute_log_pi=return_entropy)
+
+            entropy = None
+            if return_entropy:
+                entropy = -torch.sum(pi * log_pi, dim=1).item()
+
             action = Categorical(pi).sample()
-            return action.item()
+            return action.item(), entropy
 
     def update_critic(self, obs, action, reward, next_obs, not_done, L, step):
         with torch.no_grad():
@@ -843,7 +850,7 @@ class SacAeAgentDiscrete(object):
         actor_loss = actor_loss.mean()
 
         L.log('train_actor/loss', actor_loss, step)
-        L.log('train_actor/target_entropy', self.target_entropy, step)
+        L.log('train_actor/target_entropy', self.entropy_scheduler.get_target_entropy(), step)
         if self.gumbel != 'none':
             L.log('train_actor/entropy', -log_pi.mean(), step)
             L.log('train_actor/entropy_orig', -torch.sum(F.softmax(logit, dim=1) * F.log_softmax(logit, dim=1), dim=1).mean(), step)
@@ -861,9 +868,9 @@ class SacAeAgentDiscrete(object):
         if self.auto_alpha > 0:
             self.log_alpha_optimizer.zero_grad()
             if self.gumbel != 'none':
-                alpha_loss = (self.alpha * (-log_pi - self.target_entropy).detach()).mean()
+                alpha_loss = (self.alpha * (-log_pi - self.entropy_scheduler.get_target_entropy()).detach()).mean()
             else:
-                alpha_loss = (self.alpha * (entropy - self.target_entropy).detach()).mean()
+                alpha_loss = (self.alpha * (entropy - self.entropy_scheduler.get_target_entropy()).detach()).mean()
             L.log('train_alpha/loss', alpha_loss, step)
             L.log('train_alpha/value', self.alpha, step)
             alpha_loss.backward()

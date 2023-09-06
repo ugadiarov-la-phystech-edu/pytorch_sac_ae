@@ -186,3 +186,38 @@ class FrameStack(gym.Wrapper):
             obs = np.moveaxis(obs, -1, 0)
 
         return obs
+
+
+class EntropyScheduler:
+    def __init__(self, exp_discount, average_threshold, std_threshold, entropy_discount, total_conditioned_num):
+        self.exp_discount = exp_discount
+        self.average_threshold = average_threshold
+        self.std_threshold_squared = std_threshold * std_threshold
+        self.entropy_discount = entropy_discount
+        self.total_conditioned_num = total_conditioned_num
+
+        self.target_entropy = None
+        self.entropy = 0
+        self.entropy_std_squared = 0
+        self.conditioned_num = 0
+
+    def update(self, entropy):
+        delta = entropy - self.entropy
+        self.entropy += (1 - self.exp_discount) * delta
+        self.entropy_std_squared = \
+            self.exp_discount * (self.entropy_std_squared + (1 - self.exp_discount) * delta * delta)
+
+        if not (-self.average_threshold < self.entropy - self.target_entropy < self.average_threshold) \
+                or self.entropy_std_squared > self.std_threshold_squared:
+            return
+
+        self.conditioned_num += 1
+        if self.conditioned_num >= self.total_conditioned_num:
+            self.conditioned_num = 0
+            self.target_entropy *= self.entropy_discount
+
+    def get_target_entropy(self):
+        return self.target_entropy
+
+    def set_target_entropy(self, target_entropy):
+        self.target_entropy = target_entropy

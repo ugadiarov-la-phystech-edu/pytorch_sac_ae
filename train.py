@@ -118,6 +118,12 @@ def parse_args():
     parser.add_argument('--project', type=str, required=True)
     parser.add_argument('--run_name', type=str, required=True)
 
+    parser.add_argument('--exp_discount', default=0.999, type=float)
+    parser.add_argument('--average_threshold', default=0.01, type=float)
+    parser.add_argument('--std_threshold', default=0.05, type=float)
+    parser.add_argument('--entropy_discount', default=1, type=float)
+    parser.add_argument('--total_conditioned_num', default=3, type=int)
+
     args = parser.parse_args()
     return args
 
@@ -140,7 +146,7 @@ def evaluate(env, agent, video, num_episodes, L, step, deterministic):
                 if deterministic:
                     action = agent.select_action(obs)
                 else:
-                    action = agent.sample_action(obs)
+                    action, _ = agent.sample_action(obs)
             obs, reward, done, info = env.step(action)
             video.record(env)
             episode_reward += reward
@@ -184,10 +190,15 @@ def make_agent(obs_shape, action_space, args, device):
                 num_filters=args.num_filters
             )
         elif isinstance(action_space, gym.spaces.Discrete):
+            entropy_scheduler = utils.EntropyScheduler(
+                args.exp_discount, args.average_threshold, args.std_threshold, args.entropy_discount,
+                args.total_conditioned_num,
+            )
             return SacAeAgentDiscrete(
                 obs_shape=obs_shape,
                 action_dim=action_space.n,
                 device=device,
+                entropy_scheduler=entropy_scheduler,
                 hidden_dim=args.hidden_dim,
                 discount=args.discount,
                 init_temperature=args.init_temperature,
@@ -379,7 +390,9 @@ def main():
             action = env.action_space.sample()
         else:
             with utils.eval_mode(agent):
-                action = agent.sample_action(obs)
+                action, entropy = agent.sample_action(obs, return_entropy=True)
+                if step >= args.init_steps:
+                    agent.entropy_scheduler.update(entropy)
 
         # run training update
         if step >= args.init_steps:
