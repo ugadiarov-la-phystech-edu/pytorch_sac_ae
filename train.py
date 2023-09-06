@@ -105,7 +105,7 @@ def parse_args():
     parser.add_argument('--init_temperature', default=0.1, type=float)
     parser.add_argument('--alpha_lr', default=1e-4, type=float)
     parser.add_argument('--alpha_beta', default=0.5, type=float)
-    parser.add_argument('--auto_alpha', default=True, choices=[False, True], metavar='False|True', type=str2bool)
+    parser.add_argument('--auto_alpha', default=0, type=float)
     parser.add_argument('--gumbel', default='none', choices=['none', 'soft', 'hard', 'straight-through'], type=str)
     parser.add_argument('--temperature', default=1.0, type=float)
     # misc
