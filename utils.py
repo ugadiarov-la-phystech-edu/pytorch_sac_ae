@@ -221,3 +221,7 @@ class EntropyScheduler:
 
     def set_target_entropy(self, target_entropy):
         self.target_entropy = target_entropy
+
+    def log(self, L, step):
+        L.log('train/averaged_entropy', self.entropy, step)
+        L.log('train/entropy_std_squared', self.entropy_std_squared, step)
