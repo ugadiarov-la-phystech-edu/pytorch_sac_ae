@@ -1,3 +1,5 @@
+import collections
+
 import torch
 import numpy as np
 import torch.nn as nn
@@ -189,7 +191,7 @@ class FrameStack(gym.Wrapper):
 
 
 class EntropyScheduler:
-    def __init__(self, exp_discount, average_threshold, std_threshold, entropy_discount, total_conditioned_num):
+    def __init__(self, exp_discount, average_threshold, std_threshold, entropy_discount, total_conditioned_num, length=5000):
         self.exp_discount = exp_discount
         self.average_threshold = average_threshold
         self.std_threshold_squared = std_threshold * std_threshold
@@ -200,15 +202,33 @@ class EntropyScheduler:
         self.entropy = 0
         self.entropy_std_squared = 0
         self.conditioned_num = 0
+        self.history = collections.deque(maxlen=length)
+        self.history_sum = 0
+
+    # def update(self, entropy):
+    #     delta = entropy - self.entropy
+    #     self.entropy += (1 - self.exp_discount) * delta
+    #     self.entropy_std_squared = \
+    #         self.exp_discount * (self.entropy_std_squared + (1 - self.exp_discount) * delta * delta)
+    #
+    #     if not (-self.average_threshold < self.entropy - self.target_entropy < self.average_threshold) \
+    #             or self.entropy_std_squared > self.std_threshold_squared:
+    #         return
+    #
+    #     self.conditioned_num += 1
+    #     if self.conditioned_num >= self.total_conditioned_num:
+    #         self.conditioned_num = 0
+    #         self.target_entropy *= self.entropy_discount
 
     def update(self, entropy):
-        delta = entropy - self.entropy
-        self.entropy += (1 - self.exp_discount) * delta
-        self.entropy_std_squared = \
-            self.exp_discount * (self.entropy_std_squared + (1 - self.exp_discount) * delta * delta)
+        self.history_sum += entropy
+        if len(self.history) == self.history.maxlen:
+            self.history_sum -= self.history.popleft()
 
-        if not (-self.average_threshold < self.entropy - self.target_entropy < self.average_threshold) \
-                or self.entropy_std_squared > self.std_threshold_squared:
+        self.history.append(entropy)
+        self.entropy = self.history_sum / len(self.history)
+
+        if abs(self.entropy - self.target_entropy) >= self.average_threshold:
             return
 
         self.conditioned_num += 1
