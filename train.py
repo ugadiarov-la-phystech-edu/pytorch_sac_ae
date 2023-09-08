@@ -89,11 +89,11 @@ def parse_args():
     parser.add_argument('--actor_update_freq', default=2, type=int)
     parser.add_argument('--encoder', default='critic', choices=['actor', 'critic', 'both'], type=str)
     # encoder/decoder
-    parser.add_argument('--encoder_type', default='pixel', type=str)
+    parser.add_argument('--encoder_type', default='pixel', choices=['pixel', 'pixel_cnn'], type=str)
     parser.add_argument('--encoder_feature_dim', default=50, type=int)
     parser.add_argument('--encoder_lr', default=1e-3, type=float)
     parser.add_argument('--encoder_tau', default=0.05, type=float)
-    parser.add_argument('--decoder_type', default='pixel', type=str)
+    parser.add_argument('--decoder_type', default='pixel', choices=['pixel', 'identity'], type=str)
     parser.add_argument('--decoder_lr', default=1e-3, type=float)
     parser.add_argument('--decoder_update_freq', default=1, type=int)
     parser.add_argument('--decoder_latent_lambda', default=1e-6, type=float)
@@ -289,7 +289,7 @@ def make_env(args, is_eval=False):
         raise ValueError(f'Unknown domain: type={args.domain_type} name={args.domain_name}')
 
     # stack several consecutive frames together
-    if args.encoder_type == 'pixel':
+    if args.encoder_type.startswith('pixel'):
         env = utils.FrameStack(env, k=args.frame_stack, channels_first=channels_first)
 
     return env

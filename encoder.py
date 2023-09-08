@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -109,7 +110,30 @@ class IdentityEncoder(nn.Module):
         pass
 
 
-_AVAILABLE_ENCODERS = {'pixel': PixelEncoder, 'identity': IdentityEncoder}
+class PixelCnnEncoder(nn.Module):
+    """NatureCNN encoder of pixels observations."""
+    def __init__(self, obs_shape, feature_dim, num_layers, num_filters):
+        super().__init__()
+
+        assert len(obs_shape) == 3
+        self.net = nn.Sequential(
+            nn.Conv2d(obs_shape[0], 32, kernel_size=8, stride=4), nn.ReLU(inplace=True),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2), nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1), nn.ReLU(inplace=True),
+            nn.Flatten()
+        )
+        with torch.no_grad():
+            self.feature_dim = np.prod(self.net(torch.zeros(1, *obs_shape)).size()[1:])
+
+    def forward(self, obs, detach=False):
+        obs = obs / 255.
+        return self.net(obs)
+
+    def log(self, L, step, log_freq):
+        pass
+
+
+_AVAILABLE_ENCODERS = {'pixel': PixelEncoder, 'identity': IdentityEncoder, 'pixel_cnn': PixelCnnEncoder}
 
 
 def make_encoder(

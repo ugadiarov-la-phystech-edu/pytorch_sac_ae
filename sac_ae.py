@@ -854,7 +854,7 @@ class SacAeAgentDiscrete(object):
         if self.gumbel != 'none':
             entropy = -torch.sum(F.softmax(logit, dim=1) * F.log_softmax(logit, dim=1), dim=1)
             L.log('train_actor/entropy', -log_pi.mean(), step)
-            L.log('train_actor/entropy_orig', -torch.sum(F.softmax(logit, dim=1) * F.log_softmax(logit, dim=1), dim=1).mean(), step)
+            L.log('train_actor/entropy_orig', entropy.mean(), step)
         else:
             entropy = -torch.sum(pi * log_pi, dim=1)
             L.log('train_actor/entropy', entropy.mean(), step)
