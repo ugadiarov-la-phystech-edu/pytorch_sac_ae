@@ -722,6 +722,8 @@ class SacAeAgentDiscrete(object):
         self.log_alpha.requires_grad = self.auto_alpha > 0
         # set target entropy to -|A|
         self.entropy_scheduler.set_target_entropy(0.98 * np.log(action_dim) * self.auto_alpha)
+        self.min_alpha = 0.001
+        self.log_min_alpha = torch.tensor(np.log(self.min_alpha)).to(device)
 
         self.decoders = {}
         self.encoder_optimizers = {}
@@ -876,6 +878,9 @@ class SacAeAgentDiscrete(object):
             L.log('train_alpha/value', self.alpha, step)
             alpha_loss.backward()
             self.log_alpha_optimizer.step()
+
+            if torch.all(self.log_alpha < self.log_min_alpha).item():
+                self.log_alpha = self.log_alpha - self.log_alpha.detach() + self.log_min_alpha
 
         self.entropy_scheduler.update(entropy.mean().item())
         self.entropy_scheduler.log(L, step)
