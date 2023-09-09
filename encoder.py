@@ -114,23 +114,40 @@ class PixelCnnEncoder(nn.Module):
     """NatureCNN encoder of pixels observations."""
     def __init__(self, obs_shape, feature_dim, num_layers, num_filters):
         super().__init__()
+        self.convs = [
+            nn.Conv2d(obs_shape[0], 32, kernel_size=8, stride=4),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),
+        ]
+        self.num_layers = len(self.convs)
 
         assert len(obs_shape) == 3
-        self.net = nn.Sequential(
-            nn.Conv2d(obs_shape[0], 32, kernel_size=8, stride=4), nn.ReLU(inplace=True),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2), nn.ReLU(inplace=True),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1), nn.ReLU(inplace=True),
-            nn.Flatten()
-        )
+        layers = []
+        for layer in self.convs:
+            layers.append(layer)
+            layers.append(nn.ReLU(inplace=True))
+        layers.append(nn.Flatten())
+
+        self.net = nn.Sequential(*layers)
         with torch.no_grad():
             self.feature_dim = np.prod(self.net(torch.zeros(1, *obs_shape)).size()[1:])
 
     def forward(self, obs, detach=False):
         obs = obs / 255.
-        return self.net(obs)
+        h = self.net(obs)
+        if detach:
+            h = h.detach()
+
+        return h
 
     def log(self, L, step, log_freq):
         pass
+
+    def copy_conv_weights_from(self, source):
+        """Tie convolutional layers"""
+        # only tie conv layers
+        for i in range(self.num_layers):
+            tie_weights(src=source.convs[i], trg=self.convs[i])
 
 
 _AVAILABLE_ENCODERS = {'pixel': PixelEncoder, 'identity': IdentityEncoder, 'pixel_cnn': PixelCnnEncoder}
