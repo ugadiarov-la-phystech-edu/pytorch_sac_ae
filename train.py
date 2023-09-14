@@ -123,6 +123,7 @@ def parse_args():
     parser.add_argument('--std_threshold', default=0.05, type=float)
     parser.add_argument('--entropy_discount', default=1, type=float)
     parser.add_argument('--total_conditioned_num', default=3, type=int)
+    parser.add_argument('--detach_logit_log_pi', default=False, type=str2bool, choices=[False, True], metavar='False|True')
 
     args = parser.parse_args()
     return args
@@ -226,6 +227,7 @@ def make_agent(obs_shape, action_space, args, device):
                 num_filters=args.num_filters,
                 gumbel=args.gumbel,
                 temperature=args.temperature,
+                detach_logit_log_pi=args.detach_logit_log_pi,
             )
         else:
             raise ValueError('Unexpected action space type:', type(action_space))

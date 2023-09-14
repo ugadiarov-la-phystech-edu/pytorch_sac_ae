@@ -181,14 +181,26 @@ class ActorDiscrete(nn.Module):
             nn.Linear(hidden_dim, action_dim)
         )
 
+        self.log_softmax_temp = nn.Sequential(
+            nn.Linear(self.encoder.feature_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim, 1)
+        )
+
         self.outputs = dict()
         self.apply(weight_init)
 
     def forward(
-        self, obs, compute_pi=True, compute_log_pi=True, detach_encoder=False
+        self, obs, compute_pi=True, compute_log_pi=True, detach_encoder=False, detach_logit_log_pi=False
     ):
         obs = self.encoder(obs, detach=detach_encoder)
-        logit = self.trunk(obs)
+        logit_unscaled = self.trunk(obs)
+        softmax_temp = torch.exp(self.log_softmax_temp(obs))
+        logit = logit_unscaled / softmax_temp
+        logit_log_pi = logit
+        if detach_logit_log_pi:
+            assert self.gumbel == 'none'
+            logit_log_pi = logit_unscaled.detach() / softmax_temp
         self.outputs['logit'] = logit
 
         pi = None
@@ -197,7 +209,7 @@ class ActorDiscrete(nn.Module):
             if compute_pi:
                 pi = F.softmax(logit, dim=1)
                 if compute_log_pi:
-                    log_pi = F.log_softmax(logit, dim=1)
+                    log_pi = F.log_softmax(logit_log_pi, dim=1)
 
                 if self.gumbel == 'straight-through':
                     m = torch.distributions.Categorical(probs=pi)
@@ -671,6 +683,7 @@ class SacAeAgentDiscrete(object):
         num_filters=32,
         gumbel='none',
         temperature=1.0,
+        detach_logit_log_pi=False,
     ):
         self.action_dim = action_dim
         self.device = device
@@ -685,6 +698,7 @@ class SacAeAgentDiscrete(object):
         self.gumbel = gumbel
         self.temperature = temperature
         self.entropy_scheduler = entropy_scheduler
+        self.detach_logit_log_pi = detach_logit_log_pi
 
         self.actor = ActorDiscrete(
             obs_shape, action_dim, hidden_dim, encoder_type,
@@ -838,7 +852,9 @@ class SacAeAgentDiscrete(object):
 
     def update_actor_and_alpha(self, obs, L, step):
         # detach encoder, so we don't update it with the actor loss
-        logit, pi, log_pi = self.actor(obs, detach_encoder=self.encoder == 'critic')
+        logit, pi, log_pi = self.actor(
+            obs, detach_encoder=self.encoder == 'critic', detach_logit_log_pi=self.detach_logit_log_pi
+        )
         if self.gumbel != 'none':
             actor_Q1, actor_Q2 = self.critic(obs, action=pi, detach_encoder=True)
         else:
