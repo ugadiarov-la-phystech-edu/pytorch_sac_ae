@@ -163,15 +163,15 @@ class ActorDiscrete(nn.Module):
     def __init__(
         self, obs_shape, action_dim, hidden_dim, encoder_type,
         encoder_feature_dim, num_layers, num_filters, gumbel='none', temperature=1.0,
-        log_softmax_temp_min=-10, log_softmax_temp_max=3,
+        softmax_temp_min=0.001, softmax_temp_max=10,
     ):
         super().__init__()
         self.gumbel = gumbel
         if gumbel not in ('none', 'soft', 'hard', 'straight-through'):
             raise ValueError(f'Unexpected value of gumbel parameter:', gumbel)
         self.temperature = temperature
-        self.log_softmax_temp_min = log_softmax_temp_min
-        self.log_softmax_temp_max = log_softmax_temp_max
+        self.softmax_temp_min = softmax_temp_min
+        self.softmax_temp_max = softmax_temp_max
 
         self.encoder = make_encoder(
             encoder_type, obs_shape, encoder_feature_dim, num_layers,
@@ -198,10 +198,8 @@ class ActorDiscrete(nn.Module):
     ):
         obs = self.encoder(obs, detach=detach_encoder)
         logit_unscaled = self.trunk(obs)
-        softmax_temp = torch.tanh(self.log_softmax_temp(obs))
-        softmax_temp = self.log_softmax_temp_min + 0.5 * (
-            self.log_softmax_temp_max - self.log_softmax_temp_min
-        ) * (softmax_temp + 1)
+        softmax_temp = torch.sigmoid(self.log_softmax_temp(obs))
+        softmax_temp = self.softmax_temp_min + (self.softmax_temp_max - self.softmax_temp_min) * softmax_temp
         logit = logit_unscaled / softmax_temp
         logit_log_pi = logit
         if detach_logit_log_pi:
@@ -879,6 +877,8 @@ class SacAeAgentDiscrete(object):
         L.log('train_actor/loss', actor_loss, step)
         L.log('train_actor/target_entropy', self.entropy_scheduler.get_target_entropy(), step)
         L.log('train_actor/softmax_temp', softmax_temp.mean().item(), step)
+        L.log('train_actor/pi_range', torch.mean(pi.max(dim=1).values - pi.min(dim=1).values).item(), step)
+        L.log('train_actor/pi_std', pi.std(dim=1).mean().item(), step)
         if self.gumbel != 'none':
             entropy = -torch.sum(F.softmax(logit, dim=1) * F.log_softmax(logit, dim=1), dim=1)
             L.log('train_actor/entropy', -log_pi.mean(), step)
