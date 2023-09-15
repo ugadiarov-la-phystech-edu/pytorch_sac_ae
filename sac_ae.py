@@ -163,7 +163,7 @@ class ActorDiscrete(nn.Module):
     def __init__(
         self, obs_shape, action_dim, hidden_dim, encoder_type,
         encoder_feature_dim, num_layers, num_filters, gumbel='none', temperature=1.0,
-        softmax_temp_min=0.001, softmax_temp_max=10,
+        softmax_temp_min=1, softmax_temp_max=10,
     ):
         super().__init__()
         self.gumbel = gumbel
@@ -691,6 +691,8 @@ class SacAeAgentDiscrete(object):
         gumbel='none',
         temperature=1.0,
         detach_logit_log_pi=False,
+        softmax_temp_min=1,
+        softmax_temp_max=10,
     ):
         self.action_dim = action_dim
         self.device = device
@@ -709,7 +711,8 @@ class SacAeAgentDiscrete(object):
 
         self.actor = ActorDiscrete(
             obs_shape, action_dim, hidden_dim, encoder_type,
-            encoder_feature_dim, num_layers, num_filters, self.gumbel, self.temperature
+            encoder_feature_dim, num_layers, num_filters, self.gumbel, self.temperature,
+            softmax_temp_min=softmax_temp_min, softmax_temp_max=softmax_temp_max
         ).to(device)
 
         self.critic = CriticDiscrete(
