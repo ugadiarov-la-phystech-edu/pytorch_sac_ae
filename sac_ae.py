@@ -194,7 +194,7 @@ class ActorDiscrete(nn.Module):
         self.apply(weight_init)
 
     def forward(
-        self, obs, compute_pi=True, compute_log_pi=True, detach_encoder=False, detach_logit_log_pi=False
+        self, obs, compute_pi=True, compute_log_pi=True, detach_encoder=False, detach_logit_log_pi=False, return_temperature=False
     ):
         obs = self.encoder(obs, detach=detach_encoder)
         logit_unscaled = self.trunk(obs)
@@ -229,6 +229,9 @@ class ActorDiscrete(nn.Module):
             if compute_pi:
                 pi, log_pi = gumbel_softmax(logit, self.temperature, hard=self.gumbel == 'hard',
                                             compute_log_prob=compute_log_pi, dim=1)
+
+        if return_temperature:
+            return logit, pi, log_pi, softmax_temp
 
         return logit, pi, log_pi
 
@@ -858,8 +861,8 @@ class SacAeAgentDiscrete(object):
 
     def update_actor_and_alpha(self, obs, L, step):
         # detach encoder, so we don't update it with the actor loss
-        logit, pi, log_pi = self.actor(
-            obs, detach_encoder=self.encoder == 'critic', detach_logit_log_pi=self.detach_logit_log_pi
+        logit, pi, log_pi, softmax_temp = self.actor(
+            obs, detach_encoder=self.encoder == 'critic', detach_logit_log_pi=self.detach_logit_log_pi, return_temperature=True
         )
         if self.gumbel != 'none':
             actor_Q1, actor_Q2 = self.critic(obs, action=pi, detach_encoder=True)
@@ -875,6 +878,7 @@ class SacAeAgentDiscrete(object):
 
         L.log('train_actor/loss', actor_loss, step)
         L.log('train_actor/target_entropy', self.entropy_scheduler.get_target_entropy(), step)
+        L.log('train_actor/softmax_temp', softmax_temp.mean().item(), step)
         if self.gumbel != 'none':
             entropy = -torch.sum(F.softmax(logit, dim=1) * F.log_softmax(logit, dim=1), dim=1)
             L.log('train_actor/entropy', -log_pi.mean(), step)
