@@ -171,7 +171,7 @@ class ActorDiscrete(nn.Module):
         else:
             entropy = -torch.sum(pi * log_pi, dim=1)
 
-        return logit, pi, log_pi, entropy
+        return logit, pi, log_pi, entropy, softmax_temperature
 
     def log(self, L, step, log_freq=LOG_FREQ):
         if step % log_freq != 0:
@@ -703,7 +703,7 @@ class SacAeAgentDiscrete(object):
         with torch.no_grad():
             obs = torch.FloatTensor(obs).to(self.device)
             obs = obs.unsqueeze(0)
-            logit, _, _, _ = self.actor(
+            logit, _, _, _, _ = self.actor(
                 obs, compute_pi=False, compute_log_pi=False
             )
             return logit.max(dim=1).indices.item()
@@ -712,13 +712,13 @@ class SacAeAgentDiscrete(object):
         with torch.no_grad():
             obs = torch.FloatTensor(obs).to(self.device)
             obs = obs.unsqueeze(0)
-            _, pi, _, _ = self.actor(obs, compute_log_pi=False)
+            _, pi, _, _, _ = self.actor(obs, compute_log_pi=False)
             action = Categorical(pi).sample()
             return action.item()
 
     def update_critic(self, obs, action, reward, next_obs, not_done, L, step):
         with torch.no_grad():
-            _, pi, log_pi, _ = self.actor(next_obs, detach_encoder=True)
+            _, pi, log_pi, _, _ = self.actor(next_obs, detach_encoder=True)
             target_Q1, target_Q2 = self.critic_target(next_obs, action=None, detach_encoder=True)
             target_V = torch.sum(pi * (torch.min(target_Q1, target_Q2) - self.alpha.detach() * log_pi), dim=1, keepdim=True)
             target_Q = reward + (not_done * self.discount * target_V)
@@ -741,7 +741,7 @@ class SacAeAgentDiscrete(object):
 
     def update_actor_and_alpha(self, obs, L, step):
         # detach encoder, so we don't update it with the actor loss
-        _, pi, log_pi, entropy = self.actor(obs, detach_encoder=not self.actor_encoder, entropy_detach=self.entropy_detach)
+        _, pi, log_pi, entropy, softmax_temperature = self.actor(obs, detach_encoder=not self.actor_encoder, entropy_detach=self.entropy_detach)
         actor_Q1, actor_Q2 = self.critic(obs, action=None, detach_encoder=True)
 
         actor_Q = torch.min(actor_Q1, actor_Q2)
@@ -750,6 +750,13 @@ class SacAeAgentDiscrete(object):
         L.log('train_actor/loss', actor_loss, step)
         L.log('train_actor/target_entropy', self.target_entropy, step)
         L.log('train_actor/entropy', entropy.mean(), step)
+        L.log('train_actor/softmax_temperature', softmax_temperature.mean().item(), step)
+        pi_ranked = torch.sort(pi, dim=1, descending=True).values.detach().cpu().numpy()
+        L.log('train_actor/pi_ranking_0', pi_ranked[:, 0].mean(), step)
+        L.log('train_actor/pi_ranking_1', pi_ranked[:, 1].mean(), step)
+        L.log('train_actor/pi_ranking_2', pi_ranked[:, 2].mean(), step)
+        L.log('train_actor/pi_ranking_3', pi_ranked[:, 3].mean(), step)
+        L.log('train_actor/pi_ranking_4', pi_ranked[:, 4].mean(), step)
 
         # optimize the actor
         self.actor_optimizer.zero_grad()
