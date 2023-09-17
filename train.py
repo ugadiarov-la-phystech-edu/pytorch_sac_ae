@@ -106,6 +106,7 @@ def parse_args():
     parser.add_argument('--alpha_lr', default=1e-4, type=float)
     parser.add_argument('--alpha_beta', default=0.5, type=float)
     parser.add_argument('--auto_alpha', default=True, choices=[False, True], metavar='False|True', type=str2bool)
+    parser.add_argument('--entropy_detach', default=False, choices=[False, True], metavar='False|True', type=str2bool)
     # misc
     parser.add_argument('--seed', default=1, type=int)
     parser.add_argument('--work_dir', default='.', type=str)
@@ -203,7 +204,8 @@ def make_agent(obs_shape, action_space, args, device):
                 decoder_latent_lambda=args.decoder_latent_lambda,
                 decoder_weight_lambda=args.decoder_weight_lambda,
                 num_layers=args.num_layers,
-                num_filters=args.num_filters
+                num_filters=args.num_filters,
+                entropy_detach=args.entropy_detach
             )
         else:
             raise ValueError('Unexpected action space type:', type(action_space))

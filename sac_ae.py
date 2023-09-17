@@ -120,9 +120,11 @@ class ActorDiscrete(nn.Module):
     """MLP actor network."""
     def __init__(
         self, obs_shape, action_dim, hidden_dim, encoder_type,
-        encoder_feature_dim, num_layers, num_filters
+        encoder_feature_dim, num_layers, num_filters, softmax_temperature_min=1, softmax_temperature_max=10,
     ):
         super().__init__()
+        self.softmax_temperature_min = softmax_temperature_min
+        self.softmax_temperature_max = softmax_temperature_max
 
         self.encoder = make_encoder(
             encoder_type, obs_shape, encoder_feature_dim, num_layers,
@@ -135,24 +137,41 @@ class ActorDiscrete(nn.Module):
             nn.Linear(hidden_dim, action_dim)
         )
 
+        self.logit_softmax_temperature = nn.Sequential(
+            nn.Linear(self.encoder.feature_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim), nn.ReLU(),
+            nn.Linear(hidden_dim, 1)
+        )
+
         self.outputs = dict()
         self.apply(weight_init)
 
     def forward(
-        self, obs, compute_pi=True, compute_log_pi=True, detach_encoder=False
+        self, obs, compute_pi=True, compute_log_pi=True, detach_encoder=False, entropy_detach=False
     ):
         obs = self.encoder(obs, detach=detach_encoder)
-        logit = self.trunk(obs)
+        logit_unscaled = self.trunk(obs)
+        softmax_temperature = torch.sigmoid(self.logit_softmax_temperature(obs))
+        softmax_temperature = self.softmax_temperature_min + (
+                    self.softmax_temperature_max - self.softmax_temperature_min) * softmax_temperature
+        logit = logit_unscaled / softmax_temperature
+
         self.outputs['logit'] = logit
 
         pi = None
         log_pi = None
-        if compute_pi:
-            pi = F.softmax(logit, dim=1)
-        if compute_log_pi:
-            log_pi = F.log_softmax(logit, dim=1)
+        entropy = None
+        pi = F.softmax(logit, dim=1)
+        log_pi = F.log_softmax(logit, dim=1)
+        if entropy_detach:
+            logit_entropy = logit_unscaled.detach() / softmax_temperature
+            pi_entropy = F.softmax(logit_entropy, dim=1)
+            log_pi_entropy = F.log_softmax(logit_entropy, dim=1)
+            entropy = -torch.sum(pi_entropy * log_pi_entropy, dim=1)
+        else:
+            entropy = -torch.sum(pi * log_pi, dim=1)
 
-        return logit, pi, log_pi
+        return logit, pi, log_pi, entropy
 
     def log(self, L, step, log_freq=LOG_FREQ):
         if step % log_freq != 0:
@@ -587,7 +606,8 @@ class SacAeAgentDiscrete(object):
         decoder_latent_lambda=0.0,
         decoder_weight_lambda=0.0,
         num_layers=4,
-        num_filters=32
+        num_filters=32,
+        entropy_detach=False,
     ):
         self.device = device
         self.discount = discount
@@ -598,6 +618,7 @@ class SacAeAgentDiscrete(object):
         self.decoder_update_freq = decoder_update_freq
         self.decoder_latent_lambda = decoder_latent_lambda
         self.actor_encoder = actor_encoder
+        self.entropy_detach = entropy_detach
 
         self.actor = ActorDiscrete(
             obs_shape, action_dim, hidden_dim, encoder_type,
@@ -682,7 +703,7 @@ class SacAeAgentDiscrete(object):
         with torch.no_grad():
             obs = torch.FloatTensor(obs).to(self.device)
             obs = obs.unsqueeze(0)
-            logit, _, _ = self.actor(
+            logit, _, _, _ = self.actor(
                 obs, compute_pi=False, compute_log_pi=False
             )
             return logit.max(dim=1).indices.item()
@@ -691,13 +712,13 @@ class SacAeAgentDiscrete(object):
         with torch.no_grad():
             obs = torch.FloatTensor(obs).to(self.device)
             obs = obs.unsqueeze(0)
-            _, pi, _ = self.actor(obs, compute_log_pi=False)
+            _, pi, _, _ = self.actor(obs, compute_log_pi=False)
             action = Categorical(pi).sample()
             return action.item()
 
     def update_critic(self, obs, action, reward, next_obs, not_done, L, step):
         with torch.no_grad():
-            _, pi, log_pi = self.actor(next_obs, detach_encoder=True)
+            _, pi, log_pi, _ = self.actor(next_obs, detach_encoder=True)
             target_Q1, target_Q2 = self.critic_target(next_obs, action=None, detach_encoder=True)
             target_V = torch.sum(pi * (torch.min(target_Q1, target_Q2) - self.alpha.detach() * log_pi), dim=1, keepdim=True)
             target_Q = reward + (not_done * self.discount * target_V)
@@ -720,16 +741,14 @@ class SacAeAgentDiscrete(object):
 
     def update_actor_and_alpha(self, obs, L, step):
         # detach encoder, so we don't update it with the actor loss
-        _, pi, log_pi = self.actor(obs, detach_encoder=not self.actor_encoder)
+        _, pi, log_pi, entropy = self.actor(obs, detach_encoder=not self.actor_encoder, entropy_detach=self.entropy_detach)
         actor_Q1, actor_Q2 = self.critic(obs, action=None, detach_encoder=True)
 
         actor_Q = torch.min(actor_Q1, actor_Q2)
-        actor_loss = pi * (self.alpha.detach() * log_pi - actor_Q)
-        actor_loss = actor_loss.sum(dim=1).mean()
+        actor_loss = -torch.mean(self.alpha.detach() * entropy + torch.sum(pi * actor_Q, dim=1))
 
         L.log('train_actor/loss', actor_loss, step)
         L.log('train_actor/target_entropy', self.target_entropy, step)
-        entropy = -torch.sum(pi * log_pi, dim=1)
         L.log('train_actor/entropy', entropy.mean(), step)
 
         # optimize the actor
