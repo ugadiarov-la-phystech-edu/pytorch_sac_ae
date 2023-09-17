@@ -190,6 +190,9 @@ class ActorDiscrete(nn.Module):
             nn.Linear(hidden_dim, 1)
         )
 
+        for param in self.log_softmax_temp.parameters():
+            param.requires_grad = False
+
         self.outputs = dict()
         self.apply(weight_init)
 
