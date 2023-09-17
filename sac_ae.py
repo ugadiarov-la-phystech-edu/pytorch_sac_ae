@@ -587,7 +587,7 @@ class SacAeAgentDiscrete(object):
         init_temperature=0.01,
         alpha_lr=1e-3,
         alpha_beta=0.9,
-        auto_alpha=True,
+        auto_alpha=0.98,
         actor_lr=1e-3,
         actor_beta=0.9,
         actor_update_freq=2,
@@ -647,9 +647,9 @@ class SacAeAgentDiscrete(object):
 
         self.auto_alpha = auto_alpha
         self.log_alpha = torch.tensor(np.log(init_temperature)).to(device)
-        self.log_alpha.requires_grad = self.auto_alpha
+        self.log_alpha.requires_grad = self.auto_alpha > 0
         # set target entropy to -|A|
-        self.target_entropy = 0.98 * np.log(action_dim)
+        self.target_entropy = self.auto_alpha * np.log(action_dim)
 
         self.decoder = None
         if decoder_type != 'identity':
@@ -765,7 +765,7 @@ class SacAeAgentDiscrete(object):
 
         self.actor.log(L, step)
 
-        if self.auto_alpha:
+        if self.auto_alpha > 0:
             self.log_alpha_optimizer.zero_grad()
             alpha_loss = (self.alpha *
                           (entropy - self.target_entropy).detach()).mean()
