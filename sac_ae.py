@@ -120,11 +120,11 @@ class ActorDiscrete(nn.Module):
     """MLP actor network."""
     def __init__(
         self, obs_shape, action_dim, hidden_dim, encoder_type,
-        encoder_feature_dim, num_layers, num_filters, softmax_temperature_min=1, softmax_temperature_max=10,
+        encoder_feature_dim, num_layers, num_filters, _min=1, _max=10,
     ):
         super().__init__()
-        self.softmax_temperature_min = softmax_temperature_min
-        self.softmax_temperature_max = softmax_temperature_max
+        self._min = _min
+        self._max = _max
 
         self.encoder = make_encoder(
             encoder_type, obs_shape, encoder_feature_dim, num_layers,
@@ -150,10 +150,8 @@ class ActorDiscrete(nn.Module):
         self, obs, compute_pi=True, compute_log_pi=True, detach_encoder=False, entropy_detach=False
     ):
         obs = self.encoder(obs, detach=detach_encoder)
-        logit_unscaled = self.trunk(obs)
-        softmax_temperature = torch.sigmoid(self.logit_softmax_temperature(obs))
-        softmax_temperature = self.softmax_temperature_min + (
-                    self.softmax_temperature_max - self.softmax_temperature_min) * softmax_temperature
+        logit_unscaled = self._min + (self._max - self._min) * torch.sigmoid(self.trunk(obs))
+        softmax_temperature = self._min + (self._max - self._min) * torch.sigmoid(self.logit_softmax_temperature(obs))
         logit = logit_unscaled / softmax_temperature
 
         self.outputs['logit'] = logit
